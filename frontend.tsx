@@ -396,19 +396,39 @@ function App() {
 
       <div className="layout">
         <main className="main" ref={mainRef}>
-          {state.active && <Arena round={state.active} total={totalRounds} />}
+          {(() => {
+            const isGeneratingNextPrompt = state.active && state.active.phase === "prompting" && !state.active.prompt;
+            const lastCompleted = state.completed[state.completed.length - 1];
 
-          {!state.active && !state.done && state.completed.length > 0 && (
-            <div className="arena-waiting">
-              Next round starting<span className="dots"><span>.</span><span>.</span><span>.</span></span>
-            </div>
-          )}
+            if (isGeneratingNextPrompt && lastCompleted) {
+              return (
+                <>
+                  <Arena round={lastCompleted} total={totalRounds} />
+                  <div className="next-round-toast">
+                    <ModelName model={state.active!.prompter} /> is cooking up the next prompt<span className="dots"><span>.</span><span>.</span><span>.</span></span>
+                  </div>
+                </>
+              );
+            }
 
-          {!state.active && !state.done && state.completed.length === 0 && (
-            <div className="arena-waiting">
-              Game starting<span className="dots"><span>.</span><span>.</span><span>.</span></span>
-            </div>
-          )}
+            if (state.active) {
+              return <Arena round={state.active} total={totalRounds} />;
+            }
+
+            if (!state.active && !state.done && state.completed.length > 0) {
+              return <Arena round={lastCompleted} total={totalRounds} />;
+            }
+
+            if (!state.active && !state.done && state.completed.length === 0) {
+              return (
+                <div className="arena-waiting">
+                  Game starting<span className="dots"><span>.</span><span>.</span><span>.</span></span>
+                </div>
+              );
+            }
+
+            return null;
+          })()}
 
           {state.done && <GameOver scores={state.scores} />}
         </main>

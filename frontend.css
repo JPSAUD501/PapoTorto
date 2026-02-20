@@ -493,6 +493,7 @@ body {
   color: var(--text-muted);
   font-size: 48px;
   opacity: 0.5;
+  padding: 64px 0;
 }
 
 /* ── Game Over ────────────────────────────────────────────────── */
@@ -504,6 +505,7 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
+  padding: 64px 0;
 }
 
 .game-over__title {
@@ -604,6 +606,33 @@ body {
 @keyframes dot-blink {
   0%, 80%, 100% { opacity: 0.15; }
   40% { opacity: 1; }
+}
+
+/* ── Next Round Toast ─────────────────────────────────────────── */
+
+.next-round-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 16px 32px;
+  border-radius: 32px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  animation: slide-up 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────── */
