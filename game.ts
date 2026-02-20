@@ -160,7 +160,12 @@ export function isRealString(s: string, minLength = 5): boolean {
 }
 
 export function cleanResponse(text: string): string {
-  return text.trim().replace(/^["']|["']$/g, "");
+  const trimmed = text.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 // ── AI functions ────────────────────────────────────────────────────────────
