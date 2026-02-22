@@ -50,7 +50,7 @@ function RoundView({ round, total }: { round: RoundState; total: number }) {
       {/* Header */}
       <Box>
         <Text bold backgroundColor="blueBright" color="black">
-          {` ROUND ${round.num}${total !== Infinity && total !== null ? `/${total}` : ''} `}
+          {` ROUND ${round.num}${total !== Infinity && total !== null ? `/${total}` : ""} `}
         </Text>
       </Box>
       <Text dimColor>{"─".repeat(50)}</Text>
@@ -196,7 +196,9 @@ function Scoreboard({ scores }: { scores: Record<string, number> }) {
                 {name.padEnd(NAME_PAD)}
               </Text>
               <Text color={MODEL_COLORS[name]}>{bar}</Text>
-              <Text bold>{score} {score === 1 ? 'win' : 'wins'}</Text>
+              <Text bold>
+                {score} {score === 1 ? "win" : "wins"}
+              </Text>
               <Text>{medal}</Text>
             </Box>
           );
@@ -260,7 +262,8 @@ function Game({ runs }: { runs: number }) {
 
 const runsArg = process.argv.find((a) => a.startsWith("runs="));
 const runsVal = runsArg ? runsArg.split("=")[1] : "infinite";
-const runs = runsVal === "infinite" ? Infinity : parseInt(runsVal || "infinite", 10);
+const runs =
+  runsVal === "infinite" ? Infinity : parseInt(runsVal || "infinite", 10);
 
 if (!process.env.OPENROUTER_API_KEY) {
   console.error("Error: Set OPENROUTER_API_KEY environment variable");
@@ -272,10 +275,8 @@ log("INFO", "startup", `Game starting: ${runs} rounds`, {
 });
 
 console.log(
-  `\n\x1b[1m\x1b[45m\x1b[30m QWIPSLOP \x1b[0m \x1b[2m${runs} rounds\x1b[0m`,
+  `\n\x1b[1m\x1b[45m\x1b[30m quipslop \x1b[0m \x1b[2m${runs} rounds\x1b[0m`,
 );
-console.log(
-  `\x1b[2mModels: ${MODELS.map((m) => m.name).join(", ")}\x1b[0m\n`,
-);
+console.log(`\x1b[2mModels: ${MODELS.map((m) => m.name).join(", ")}\x1b[0m\n`);
 
 render(<Game runs={runs} />);

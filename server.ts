@@ -16,7 +16,8 @@ import {
 
 const runsArg = process.argv.find((a) => a.startsWith("runs="));
 const runsStr = runsArg ? runsArg.split("=")[1] : "infinite";
-const runs = runsStr === "infinite" ? Infinity : parseInt(runsStr || "infinite", 10);
+const runs =
+  runsStr === "infinite" ? Infinity : parseInt(runsStr || "infinite", 10);
 
 if (!process.env.OPENROUTER_API_KEY) {
   console.error("Error: Set OPENROUTER_API_KEY environment variable");
@@ -31,9 +32,11 @@ if (allRounds.length > 0) {
   for (const round of allRounds) {
     if (round.scoreA !== undefined && round.scoreB !== undefined) {
       if (round.scoreA > round.scoreB) {
-        initialScores[round.contestants[0].name] = (initialScores[round.contestants[0].name] || 0) + 1;
+        initialScores[round.contestants[0].name] =
+          (initialScores[round.contestants[0].name] || 0) + 1;
       } else if (round.scoreB > round.scoreA) {
-        initialScores[round.contestants[1].name] = (initialScores[round.contestants[1].name] || 0) + 1;
+        initialScores[round.contestants[1].name] =
+          (initialScores[round.contestants[1].name] || 0) + 1;
       }
     }
   }
@@ -56,15 +59,33 @@ const gameState: GameState = {
 type WsData = { ip: string };
 
 const WINDOW_MS = 60_000;
-const WS_UPGRADE_LIMIT_PER_MIN = parsePositiveInt(process.env.WS_UPGRADE_LIMIT_PER_MIN, 20);
-const HISTORY_LIMIT_PER_MIN = parsePositiveInt(process.env.HISTORY_LIMIT_PER_MIN, 120);
-const ADMIN_LIMIT_PER_MIN = parsePositiveInt(process.env.ADMIN_LIMIT_PER_MIN, 10);
+const WS_UPGRADE_LIMIT_PER_MIN = parsePositiveInt(
+  process.env.WS_UPGRADE_LIMIT_PER_MIN,
+  20,
+);
+const HISTORY_LIMIT_PER_MIN = parsePositiveInt(
+  process.env.HISTORY_LIMIT_PER_MIN,
+  120,
+);
+const ADMIN_LIMIT_PER_MIN = parsePositiveInt(
+  process.env.ADMIN_LIMIT_PER_MIN,
+  10,
+);
 const MAX_WS_GLOBAL = parsePositiveInt(process.env.MAX_WS_GLOBAL, 2_000);
 const MAX_WS_PER_IP = parsePositiveInt(process.env.MAX_WS_PER_IP, 8);
-const MAX_HISTORY_PAGE = parsePositiveInt(process.env.MAX_HISTORY_PAGE, 100_000);
+const MAX_HISTORY_PAGE = parsePositiveInt(
+  process.env.MAX_HISTORY_PAGE,
+  100_000,
+);
 const MAX_HISTORY_LIMIT = parsePositiveInt(process.env.MAX_HISTORY_LIMIT, 50);
-const HISTORY_CACHE_TTL_MS = parsePositiveInt(process.env.HISTORY_CACHE_TTL_MS, 5_000);
-const MAX_HISTORY_CACHE_KEYS = parsePositiveInt(process.env.MAX_HISTORY_CACHE_KEYS, 500);
+const HISTORY_CACHE_TTL_MS = parsePositiveInt(
+  process.env.HISTORY_CACHE_TTL_MS,
+  5_000,
+);
+const MAX_HISTORY_CACHE_KEYS = parsePositiveInt(
+  process.env.MAX_HISTORY_CACHE_KEYS,
+  500,
+);
 
 const requestWindows = new Map<string, number[]>();
 const wsByIp = new Map<string, number>();
@@ -85,7 +106,9 @@ function isRateLimited(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   if (now - lastRateWindowSweep >= windowMs) {
     for (const [bucketKey, timestamps] of requestWindows) {
-      const recent = timestamps.filter((timestamp) => now - timestamp <= windowMs);
+      const recent = timestamps.filter(
+        (timestamp) => now - timestamp <= windowMs,
+      );
       if (recent.length === 0) {
         requestWindows.delete(bucketKey);
       } else {
@@ -116,7 +139,8 @@ function secureCompare(a: string, b: string): boolean {
 function isAdminAuthorized(req: Request, url: URL): boolean {
   const expected = process.env.ADMIN_SECRET;
   if (!expected) return false;
-  const provided = req.headers.get("x-admin-secret") ?? url.searchParams.get("secret") ?? "";
+  const provided =
+    req.headers.get("x-admin-secret") ?? url.searchParams.get("secret") ?? "";
   if (!provided) return false;
   return secureCompare(provided, expected);
 }
@@ -203,9 +227,12 @@ const server = Bun.serve<WsData>({
         gameState.isPaused = false;
       }
       broadcast();
-      return new Response(url.pathname === "/api/pause" ? "Paused" : "Resumed", {
-        status: 200,
-      });
+      return new Response(
+        url.pathname === "/api/pause" ? "Paused" : "Resumed",
+        {
+          status: 200,
+        },
+      );
     }
 
     if (url.pathname === "/api/history") {
@@ -214,8 +241,12 @@ const server = Bun.serve<WsData>({
       }
       const rawPage = parseInt(url.searchParams.get("page") || "1", 10);
       const rawLimit = parseInt(url.searchParams.get("limit") || "10", 10);
-      const page = Number.isFinite(rawPage) ? Math.min(Math.max(rawPage, 1), MAX_HISTORY_PAGE) : 1;
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), MAX_HISTORY_LIMIT) : 10;
+      const page = Number.isFinite(rawPage)
+        ? Math.min(Math.max(rawPage, 1), MAX_HISTORY_PAGE)
+        : 1;
+      const limit = Number.isFinite(rawLimit)
+        ? Math.min(Math.max(rawLimit, 1), MAX_HISTORY_LIMIT)
+        : 10;
       const cacheKey = `${page}:${limit}`;
       const now = Date.now();
       if (now - lastHistoryCacheSweep >= HISTORY_CACHE_TTL_MS) {
@@ -253,7 +284,9 @@ const server = Bun.serve<WsData>({
           headers: { Allow: "GET" },
         });
       }
-      if (isRateLimited(`ws-upgrade:${ip}`, WS_UPGRADE_LIMIT_PER_MIN, WINDOW_MS)) {
+      if (
+        isRateLimited(`ws-upgrade:${ip}`, WS_UPGRADE_LIMIT_PER_MIN, WINDOW_MS)
+      ) {
         return new Response("Too Many Requests", { status: 429 });
       }
       if (clients.size >= MAX_WS_GLOBAL) {
@@ -289,10 +322,13 @@ const server = Bun.serve<WsData>({
       broadcast();
     },
   },
-  development: process.env.NODE_ENV === "production" ? false : {
-    hmr: true,
-    console: true,
-  },
+  development:
+    process.env.NODE_ENV === "production"
+      ? false
+      : {
+          hmr: true,
+          console: true,
+        },
   error(error) {
     log("ERROR", "server", "Unhandled fetch/websocket error", {
       message: error.message,
@@ -302,7 +338,7 @@ const server = Bun.serve<WsData>({
   },
 });
 
-console.log(`\n🎮 Qwipslop Web — http://localhost:${server.port}`);
+console.log(`\n🎮 quipslop Web — http://localhost:${server.port}`);
 console.log(`📡 WebSocket — ws://localhost:${server.port}/ws`);
 console.log(`🎯 ${runs} rounds with ${MODELS.length} models\n`);
 

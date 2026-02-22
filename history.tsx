@@ -5,8 +5,20 @@ import "./history.css";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 type Model = { id: string; name: string };
-type TaskInfo = { model: Model; startedAt: number; finishedAt?: number; result?: string; error?: string };
-type VoteInfo = { voter: Model; startedAt: number; finishedAt?: number; votedFor?: Model; error?: boolean };
+type TaskInfo = {
+  model: Model;
+  startedAt: number;
+  finishedAt?: number;
+  result?: string;
+  error?: string;
+};
+type VoteInfo = {
+  voter: Model;
+  startedAt: number;
+  finishedAt?: number;
+  votedFor?: Model;
+  error?: boolean;
+};
 type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
@@ -44,13 +56,20 @@ function getLogo(name: string): string | null {
   if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
   if (name.includes("GLM")) return "/assets/logos/glm.svg";
   if (name.includes("GPT")) return "/assets/logos/openai.svg";
-  if (name.includes("Opus") || name.includes("Sonnet")) return "/assets/logos/claude.svg";
+  if (name.includes("Opus") || name.includes("Sonnet"))
+    return "/assets/logos/claude.svg";
   if (name.includes("Grok")) return "/assets/logos/grok.svg";
   if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
   return null;
 }
 
-function ModelName({ model, className = "" }: { model: Model; className?: string }) {
+function ModelName({
+  model,
+  className = "",
+}: {
+  model: Model;
+  className?: string;
+}) {
   const logo = getLogo(model.name);
   const color = getColor(model.name);
   return (
@@ -63,12 +82,12 @@ function ModelName({ model, className = "" }: { model: Model; className?: string
 
 // ── Components ──────────────────────────────────────────────────────────────
 
-function HistoryContestant({ 
-  task, 
-  votes, 
-  voters 
-}: { 
-  task: TaskInfo; 
+function HistoryContestant({
+  task,
+  votes,
+  voters,
+}: {
+  task: TaskInfo;
   votes: number;
   voters: Model[];
 }) {
@@ -83,13 +102,21 @@ function HistoryContestant({
       </div>
       <div className="history-contestant__votes">
         <div className="history-contestant__score" style={{ color }}>
-          {votes} {votes === 1 ? 'vote' : 'votes'}
+          {votes} {votes === 1 ? "vote" : "votes"}
         </div>
         <div className="history-contestant__voters">
-          {voters.map(v => {
+          {voters.map((v) => {
             const logo = getLogo(v.name);
             if (!logo) return null;
-            return <img key={v.name} src={logo} title={v.name} alt={v.name} className="voter-mini-logo" />;
+            return (
+              <img
+                key={v.name}
+                src={logo}
+                title={v.name}
+                alt={v.name}
+                className="voter-mini-logo"
+              />
+            );
           })}
         </div>
       </div>
@@ -99,14 +126,20 @@ function HistoryContestant({
 
 function HistoryCard({ round }: { round: RoundState }) {
   const [contA, contB] = round.contestants;
-  
-  let votesA = 0, votesB = 0;
+
+  let votesA = 0,
+    votesB = 0;
   const votersA: Model[] = [];
   const votersB: Model[] = [];
-  
+
   for (const v of round.votes) {
-    if (v.votedFor?.name === contA.name) { votesA++; votersA.push(v.voter); }
-    else if (v.votedFor?.name === contB.name) { votesB++; votersB.push(v.voter); }
+    if (v.votedFor?.name === contA.name) {
+      votesA++;
+      votersA.push(v.voter);
+    } else if (v.votedFor?.name === contB.name) {
+      votesB++;
+      votersB.push(v.voter);
+    }
   }
 
   const isAWinner = votesA > votesB;
@@ -119,44 +152,80 @@ function HistoryCard({ round }: { round: RoundState }) {
           <div className="history-card__prompter">
             Prompted by <ModelName model={round.prompter} />
           </div>
-          <div className="history-card__prompt">
-            {round.prompt}
-          </div>
+          <div className="history-card__prompt">{round.prompt}</div>
         </div>
         <div className="history-card__meta">
           <div>R{round.num}</div>
         </div>
       </div>
-      
+
       <div className="history-card__showdown">
-        <div className={`history-contestant ${isAWinner ? "history-contestant--winner" : ""}`}>
+        <div
+          className={`history-contestant ${isAWinner ? "history-contestant--winner" : ""}`}
+        >
           <div className="history-contestant__header">
             <ModelName model={contA} />
-            {isAWinner && <div className="history-contestant__winner-badge">WINNER</div>}
+            {isAWinner && (
+              <div className="history-contestant__winner-badge">WINNER</div>
+            )}
           </div>
-          <div className="history-contestant__answer">&ldquo;{round.answerTasks[0].result}&rdquo;</div>
+          <div className="history-contestant__answer">
+            &ldquo;{round.answerTasks[0].result}&rdquo;
+          </div>
           <div className="history-contestant__votes">
-            <div className="history-contestant__score" style={{ color: getColor(contA.name) }}>
-              {votesA} {votesA === 1 ? 'vote' : 'votes'}
+            <div
+              className="history-contestant__score"
+              style={{ color: getColor(contA.name) }}
+            >
+              {votesA} {votesA === 1 ? "vote" : "votes"}
             </div>
             <div className="history-contestant__voters">
-              {votersA.map(v => getLogo(v.name) && <img key={v.name} src={getLogo(v.name)!} title={v.name} className="voter-mini-logo" />)}
+              {votersA.map(
+                (v) =>
+                  getLogo(v.name) && (
+                    <img
+                      key={v.name}
+                      src={getLogo(v.name)!}
+                      title={v.name}
+                      className="voter-mini-logo"
+                    />
+                  ),
+              )}
             </div>
           </div>
         </div>
 
-        <div className={`history-contestant ${isBWinner ? "history-contestant--winner" : ""}`}>
+        <div
+          className={`history-contestant ${isBWinner ? "history-contestant--winner" : ""}`}
+        >
           <div className="history-contestant__header">
             <ModelName model={contB} />
-            {isBWinner && <div className="history-contestant__winner-badge">WINNER</div>}
+            {isBWinner && (
+              <div className="history-contestant__winner-badge">WINNER</div>
+            )}
           </div>
-          <div className="history-contestant__answer">&ldquo;{round.answerTasks[1].result}&rdquo;</div>
+          <div className="history-contestant__answer">
+            &ldquo;{round.answerTasks[1].result}&rdquo;
+          </div>
           <div className="history-contestant__votes">
-            <div className="history-contestant__score" style={{ color: getColor(contB.name) }}>
-              {votesB} {votesB === 1 ? 'vote' : 'votes'}
+            <div
+              className="history-contestant__score"
+              style={{ color: getColor(contB.name) }}
+            >
+              {votesB} {votesB === 1 ? "vote" : "votes"}
             </div>
             <div className="history-contestant__voters">
-              {votersB.map(v => getLogo(v.name) && <img key={v.name} src={getLogo(v.name)!} title={v.name} className="voter-mini-logo" />)}
+              {votersB.map(
+                (v) =>
+                  getLogo(v.name) && (
+                    <img
+                      key={v.name}
+                      src={getLogo(v.name)!}
+                      title={v.name}
+                      className="voter-mini-logo"
+                    />
+                  ),
+              )}
             </div>
           </div>
         </div>
@@ -177,13 +246,13 @@ function App() {
   useEffect(() => {
     setLoading(true);
     fetch(`/api/history?page=${page}`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data) => {
         setRounds(data.rounds);
         setTotalPages(data.totalPages || 1);
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         setError(err.message);
         setLoading(false);
       });
@@ -191,11 +260,15 @@ function App() {
 
   return (
     <div className="app">
-      <a href="/" className="main-logo">QWIPSLOP</a>
+      <a href="/" className="main-logo">
+        quipslop
+      </a>
       <main className="main">
         <div className="page-header">
           <div className="page-title">Past Rounds</div>
-          <a href="/" className="back-link">← Back to Game</a>
+          <a href="/" className="back-link">
+            ← Back to Game
+          </a>
         </div>
 
         {loading ? (
@@ -206,26 +279,31 @@ function App() {
           <div className="empty">No past rounds found.</div>
         ) : (
           <>
-            <div className="history-list" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-              {rounds.map(r => (
+            <div
+              className="history-list"
+              style={{ display: "flex", flexDirection: "column", gap: "32px" }}
+            >
+              {rounds.map((r) => (
                 <HistoryCard key={r.num + "-" + Math.random()} round={r} />
               ))}
             </div>
 
             {totalPages > 1 && (
               <div className="pagination">
-                <button 
-                  className="pagination__btn" 
-                  disabled={page === 1} 
-                  onClick={() => setPage(p => p - 1)}
+                <button
+                  className="pagination__btn"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => p - 1)}
                 >
                   PREV
                 </button>
-                <span className="pagination__info">Page {page} of {totalPages}</span>
-                <button 
-                  className="pagination__btn" 
-                  disabled={page === totalPages} 
-                  onClick={() => setPage(p => p + 1)}
+                <span className="pagination__info">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  className="pagination__btn"
+                  disabled={page === totalPages}
+                  onClick={() => setPage((p) => p + 1)}
                 >
                   NEXT
                 </button>

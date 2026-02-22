@@ -5,8 +5,20 @@ import "./frontend.css";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type Model = { id: string; name: string };
-type TaskInfo = { model: Model; startedAt: number; finishedAt?: number; result?: string; error?: string };
-type VoteInfo = { voter: Model; startedAt: number; finishedAt?: number; votedFor?: Model; error?: boolean };
+type TaskInfo = {
+  model: Model;
+  startedAt: number;
+  finishedAt?: number;
+  result?: string;
+  error?: string;
+};
+type VoteInfo = {
+  voter: Model;
+  startedAt: number;
+  finishedAt?: number;
+  votedFor?: Model;
+  error?: boolean;
+};
 type RoundState = {
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
@@ -19,8 +31,18 @@ type RoundState = {
   scoreA?: number;
   scoreB?: number;
 };
-type GameState = { completed: RoundState[]; active: RoundState | null; scores: Record<string, number>; done: boolean };
-type ServerMessage = { type: "state"; data: GameState; totalRounds: number; viewerCount: number };
+type GameState = {
+  completed: RoundState[];
+  active: RoundState | null;
+  scores: Record<string, number>;
+  done: boolean;
+};
+type ServerMessage = {
+  type: "state";
+  data: GameState;
+  totalRounds: number;
+  viewerCount: number;
+};
 
 // ── Model colors & logos ─────────────────────────────────────────────────────
 
@@ -46,7 +68,8 @@ function getLogo(name: string): string | null {
   if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
   if (name.includes("GLM")) return "/assets/logos/glm.svg";
   if (name.includes("GPT")) return "/assets/logos/openai.svg";
-  if (name.includes("Opus") || name.includes("Sonnet")) return "/assets/logos/claude.svg";
+  if (name.includes("Opus") || name.includes("Sonnet"))
+    return "/assets/logos/claude.svg";
   if (name.includes("Grok")) return "/assets/logos/grok.svg";
   if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
   return null;
@@ -55,14 +78,23 @@ function getLogo(name: string): string | null {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function Dots() {
-  return <span className="dots"><span>.</span><span>.</span><span>.</span></span>;
+  return (
+    <span className="dots">
+      <span>.</span>
+      <span>.</span>
+      <span>.</span>
+    </span>
+  );
 }
 
 function ModelTag({ model, small }: { model: Model; small?: boolean }) {
   const logo = getLogo(model.name);
   const color = getColor(model.name);
   return (
-    <span className={`model-tag ${small ? "model-tag--sm" : ""}`} style={{ color }}>
+    <span
+      className={`model-tag ${small ? "model-tag--sm" : ""}`}
+      style={{ color }}
+    >
       {logo && <img src={logo} alt="" className="model-tag__logo" />}
       {model.name}
     </span>
@@ -76,9 +108,12 @@ function PromptCard({ round }: { round: RoundState }) {
     return (
       <div className="prompt">
         <div className="prompt__by">
-          <ModelTag model={round.prompter} small /> is writing a prompt<Dots />
+          <ModelTag model={round.prompter} small /> is writing a prompt
+          <Dots />
         </div>
-        <div className="prompt__text prompt__text--loading"><Dots /></div>
+        <div className="prompt__text prompt__text--loading">
+          <Dots />
+        </div>
       </div>
     );
   }
@@ -86,14 +121,18 @@ function PromptCard({ round }: { round: RoundState }) {
   if (round.promptTask.error) {
     return (
       <div className="prompt">
-        <div className="prompt__text prompt__text--error">Prompt generation failed</div>
+        <div className="prompt__text prompt__text--error">
+          Prompt generation failed
+        </div>
       </div>
     );
   }
 
   return (
     <div className="prompt">
-      <div className="prompt__by">Prompted by <ModelTag model={round.prompter} small /></div>
+      <div className="prompt__by">
+        Prompted by <ModelTag model={round.prompter} small />
+      </div>
       <div className="prompt__text">{round.prompt}</div>
     </div>
   );
@@ -102,7 +141,12 @@ function PromptCard({ round }: { round: RoundState }) {
 // ── Contestant ───────────────────────────────────────────────────────────────
 
 function ContestantCard({
-  task, voteCount, totalVotes, isWinner, showVotes, voters,
+  task,
+  voteCount,
+  totalVotes,
+  isWinner,
+  showVotes,
+  voters,
 }: {
   task: TaskInfo;
   voteCount: number;
@@ -126,7 +170,9 @@ function ContestantCard({
 
       <div className="contestant__body">
         {!task.finishedAt ? (
-          <p className="answer answer--loading"><Dots /></p>
+          <p className="answer answer--loading">
+            <Dots />
+          </p>
         ) : task.error ? (
           <p className="answer answer--error">{task.error}</p>
         ) : (
@@ -137,18 +183,36 @@ function ContestantCard({
       {showVotes && (
         <div className="contestant__foot">
           <div className="vote-bar">
-            <div className="vote-bar__fill" style={{ width: `${pct}%`, background: color }} />
+            <div
+              className="vote-bar__fill"
+              style={{ width: `${pct}%`, background: color }}
+            />
           </div>
           <div className="vote-meta">
-            <span className="vote-meta__count" style={{ color }}>{voteCount}</span>
-            <span className="vote-meta__label">vote{voteCount !== 1 ? "s" : ""}</span>
+            <span className="vote-meta__count" style={{ color }}>
+              {voteCount}
+            </span>
+            <span className="vote-meta__label">
+              vote{voteCount !== 1 ? "s" : ""}
+            </span>
             <span className="vote-meta__dots">
               {voters.map((v, i) => {
                 const logo = getLogo(v.voter.name);
                 return logo ? (
-                  <img key={i} src={logo} alt={v.voter.name} title={v.voter.name} className="voter-dot" />
+                  <img
+                    key={i}
+                    src={logo}
+                    alt={v.voter.name}
+                    title={v.voter.name}
+                    className="voter-dot"
+                  />
                 ) : (
-                  <span key={i} className="voter-dot voter-dot--letter" style={{ color: getColor(v.voter.name) }} title={v.voter.name}>
+                  <span
+                    key={i}
+                    className="voter-dot voter-dot--letter"
+                    style={{ color: getColor(v.voter.name) }}
+                    title={v.voter.name}
+                  >
                     {v.voter.name[0]}
                   </span>
                 );
@@ -168,26 +232,31 @@ function Arena({ round, total }: { round: RoundState; total: number | null }) {
   const showVotes = round.phase === "voting" || round.phase === "done";
   const isDone = round.phase === "done";
 
-  let votesA = 0, votesB = 0;
+  let votesA = 0,
+    votesB = 0;
   for (const v of round.votes) {
     if (v.votedFor?.name === contA.name) votesA++;
     else if (v.votedFor?.name === contB.name) votesB++;
   }
   const totalVotes = votesA + votesB;
-  const votersA = round.votes.filter(v => v.votedFor?.name === contA.name);
-  const votersB = round.votes.filter(v => v.votedFor?.name === contB.name);
+  const votersA = round.votes.filter((v) => v.votedFor?.name === contA.name);
+  const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
 
   const phaseText =
-    round.phase === "prompting" ? "Writing prompt" :
-    round.phase === "answering" ? "Answering" :
-    round.phase === "voting" ? "Judges voting" :
-    "Complete";
+    round.phase === "prompting"
+      ? "Writing prompt"
+      : round.phase === "answering"
+        ? "Answering"
+        : round.phase === "voting"
+          ? "Judges voting"
+          : "Complete";
 
   return (
     <div className="arena">
       <div className="arena__meta">
         <span className="arena__round">
-          Round {round.num}{total ? <span className="dim">/{total}</span> : null}
+          Round {round.num}
+          {total ? <span className="dim">/{total}</span> : null}
         </span>
         <span className="arena__phase">{phaseText}</span>
       </div>
@@ -234,7 +303,10 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
       {champion && champion[1] > 0 && (
         <div className="game-over__winner">
           <span className="game-over__crown">👑</span>
-          <span className="game-over__name" style={{ color: getColor(champion[0]) }}>
+          <span
+            className="game-over__name"
+            style={{ color: getColor(champion[0]) }}
+          >
             {getLogo(champion[0]) && <img src={getLogo(champion[0])!} alt="" />}
             {champion[0]}
           </span>
@@ -247,19 +319,30 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 // ── Standings ────────────────────────────────────────────────────────────────
 
-function Standings({ scores, activeRound }: { scores: Record<string, number>; activeRound: RoundState | null }) {
+function Standings({
+  scores,
+  activeRound,
+}: {
+  scores: Record<string, number>;
+  activeRound: RoundState | null;
+}) {
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const maxScore = sorted[0]?.[1] || 1;
 
   const competing = activeRound
-    ? new Set([activeRound.contestants[0].name, activeRound.contestants[1].name])
+    ? new Set([
+        activeRound.contestants[0].name,
+        activeRound.contestants[1].name,
+      ])
     : new Set<string>();
 
   return (
     <aside className="standings">
       <div className="standings__head">
         <span className="standings__title">Standings</span>
-        <a href="/history" className="standings__link">History →</a>
+        <a href="/history" className="standings__link">
+          History →
+        </a>
       </div>
       <div className="standings__list">
         {sorted.map(([name, score], i) => {
@@ -267,11 +350,19 @@ function Standings({ scores, activeRound }: { scores: Record<string, number>; ac
           const color = getColor(name);
           const active = competing.has(name);
           return (
-            <div key={name} className={`standing ${active ? "standing--active" : ""}`}>
-              <span className="standing__rank">{i === 0 && score > 0 ? "👑" : i + 1}</span>
+            <div
+              key={name}
+              className={`standing ${active ? "standing--active" : ""}`}
+            >
+              <span className="standing__rank">
+                {i === 0 && score > 0 ? "👑" : i + 1}
+              </span>
               <ModelTag model={{ id: name, name }} small />
               <div className="standing__bar">
-                <div className="standing__fill" style={{ width: `${pct}%`, background: color }} />
+                <div
+                  className="standing__fill"
+                  style={{ width: `${pct}%`, background: color }}
+                />
               </div>
               <span className="standing__score">{score}</span>
             </div>
@@ -287,8 +378,13 @@ function Standings({ scores, activeRound }: { scores: Record<string, number>; ac
 function ConnectingScreen() {
   return (
     <div className="connecting">
-      <div className="connecting__logo"><img src="/assets/logo.svg" alt="Qwipslop" /></div>
-      <div className="connecting__sub">Connecting<Dots /></div>
+      <div className="connecting__logo">
+        <img src="/assets/logo.svg" alt="quipslop" />
+      </div>
+      <div className="connecting__sub">
+        Connecting
+        <Dots />
+      </div>
     </div>
   );
 }
@@ -334,8 +430,10 @@ function App() {
   if (!connected || !state) return <ConnectingScreen />;
 
   const lastCompleted = state.completed[state.completed.length - 1];
-  const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
-  const displayRound = isNextPrompting && lastCompleted ? lastCompleted : state.active;
+  const isNextPrompting =
+    state.active?.phase === "prompting" && !state.active.prompt;
+  const displayRound =
+    isNextPrompting && lastCompleted ? lastCompleted : state.active;
 
   return (
     <div className="app">
@@ -343,7 +441,7 @@ function App() {
         <main className="main">
           <header className="header">
             <a href="/" className="logo">
-              <img src="/assets/logo.svg" alt="Qwipslop" />
+              <img src="/assets/logo.svg" alt="quipslop" />
             </a>
             <div className="viewer-pill" aria-live="polite">
               <span className="viewer-pill__dot" />
@@ -356,12 +454,17 @@ function App() {
           ) : displayRound ? (
             <Arena round={displayRound} total={totalRounds} />
           ) : (
-            <div className="waiting">Starting<Dots /></div>
+            <div className="waiting">
+              Starting
+              <Dots />
+            </div>
           )}
 
           {isNextPrompting && lastCompleted && (
             <div className="next-toast">
-              <ModelTag model={state.active!.prompter} small /> is writing the next prompt<Dots />
+              <ModelTag model={state.active!.prompter} small /> is writing the
+              next prompt
+              <Dots />
             </div>
           )}
         </main>
