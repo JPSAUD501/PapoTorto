@@ -74,6 +74,9 @@ const ADMIN_LIMIT_PER_MIN = parsePositiveInt(
 );
 const MAX_WS_GLOBAL = parsePositiveInt(process.env.MAX_WS_GLOBAL, 100_000);
 const MAX_WS_PER_IP = parsePositiveInt(process.env.MAX_WS_PER_IP, 8);
+const MAX_WS_NEW_PER_SEC = parsePositiveInt(process.env.MAX_WS_NEW_PER_SEC, 50);
+let wsNewConnections = 0;
+let wsNewConnectionsResetAt = Date.now() + 1000;
 const MAX_HISTORY_PAGE = parsePositiveInt(
   process.env.MAX_HISTORY_PAGE,
   100_000,
@@ -101,21 +104,34 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function getClientIp(req: Request, server: Bun.Server<WsData>): string {
-  // Railway's edge proxy strips client-provided X-Real-IP and sets the actual
-  // client IP. All traffic goes through the edge proxy — it cannot be bypassed.
-  // As a fallback, use the rightmost X-Forwarded-For value (the one Railway
-  // appends), then Bun's requestIP (which sees the proxy IP on Railway).
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
+function isPrivateIp(ip: string): boolean {
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (v4 === "127.0.0.1" || ip === "::1") return true;
+  if (v4.startsWith("10.")) return true;
+  if (v4.startsWith("192.168.")) return true;
+  if (ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  if (v4.startsWith("172.")) {
+    const second = parseInt(v4.split(".")[1] ?? "", 10);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
 
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) {
-    const rightmost = xff.split(",").at(-1)?.trim();
-    if (rightmost) return rightmost;
+function getClientIp(req: Request, server: Bun.Server<WsData>): string {
+  const socketIp = server.requestIP(req)?.address ?? "unknown";
+
+  // Only trust proxy headers when the direct connection comes from
+  // a private IP (i.e. Railway's edge proxy). Direct public connections
+  // cannot spoof their IP this way.
+  if (socketIp !== "unknown" && isPrivateIp(socketIp)) {
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) {
+      const rightmost = xff.split(",").at(-1)?.trim();
+      if (rightmost) return rightmost;
+    }
   }
 
-  return server.requestIP(req)?.address ?? "unknown";
+  return socketIp;
 }
 
 function isRateLimited(key: string, limit: number, windowMs: number): boolean {
@@ -561,6 +577,14 @@ const server = Bun.serve<WsData>({
           headers: { Allow: "GET" },
         });
       }
+      const now = Date.now();
+      if (now >= wsNewConnectionsResetAt) {
+        wsNewConnections = 0;
+        wsNewConnectionsResetAt = now + 1000;
+      }
+      if (wsNewConnections >= MAX_WS_NEW_PER_SEC) {
+        return new Response("Too Many Requests", { status: 429 });
+      }
       if (clients.size >= MAX_WS_GLOBAL) {
         log("WARN", "ws", "Global WS limit reached, rejecting", {
           ip,
@@ -584,6 +608,7 @@ const server = Bun.serve<WsData>({
         log("WARN", "ws", "WebSocket upgrade failed", { ip });
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
+      wsNewConnections++;
       return undefined;
     }
 
