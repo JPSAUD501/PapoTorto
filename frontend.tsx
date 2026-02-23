@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
+import { api } from "./convex/_generated/api";
 import "./frontend.css";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 type Model = { id: string; name: string };
 type TaskInfo = {
@@ -38,6 +40,8 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  humanScores: Record<string, number>;
+  humanVoteTotals: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -56,15 +60,15 @@ type ViewerCountMessage = {
 type VotedAckMessage = { type: "votedAck"; votedFor: "A" | "B" };
 type ServerMessage = StateMessage | ViewerCountMessage | VotedAckMessage;
 
-// ── Model colors & logos ─────────────────────────────────────────────────────
+// â”€â”€ Model colors & logos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3.1 Pro": "#4285F4",
+  "Gemini 3 Flash": "#4285F4",
   "Kimi K2": "#00E599",
   "DeepSeek 3.2": "#4D6BFE",
+  "Qwen 3.5 Plus": "#E67E22",
   "GLM-5": "#1F63EC",
   "GPT-5.2": "#10A37F",
-  "Opus 4.6": "#D97757",
   "Sonnet 4.6": "#D97757",
   "Grok 4.1": "#FFFFFF",
   "MiniMax 2.5": "#FF3B30",
@@ -78,6 +82,7 @@ function getLogo(name: string): string | null {
   if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
   if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
   if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
+  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
   if (name.includes("GLM")) return "/assets/logos/glm.svg";
   if (name.includes("GPT")) return "/assets/logos/openai.svg";
   if (name.includes("Opus") || name.includes("Sonnet"))
@@ -87,7 +92,65 @@ function getLogo(name: string): string | null {
   return null;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+function getConvexUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  const url = env?.VITE_CONVEX_URL;
+  if (!url) throw new Error("VITE_CONVEX_URL is not configured");
+  return url.replace(/\/$/, "");
+}
+
+function getOrCreateViewerId(): string {
+  const key = "papotorto.viewerId";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const generated = crypto.randomUUID();
+  window.localStorage.setItem(key, generated);
+  return generated;
+}
+
+type RankingEntry = {
+  name: string;
+  score: number;
+  tieTotal: number;
+};
+
+function collectRankingNames(...records: Record<string, number>[]): string[] {
+  const names = new Set<string>();
+  for (const record of records) {
+    for (const name of Object.keys(record)) {
+      names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function rankByScore(
+  scores: Record<string, number>,
+  tieTotals: Record<string, number>,
+  fallbackNames: string[],
+): RankingEntry[] {
+  const names = new Set<string>([
+    ...fallbackNames,
+    ...Object.keys(scores),
+    ...Object.keys(tieTotals),
+  ]);
+  return [...names]
+    .map((name) => ({
+      name,
+      score: scores[name] ?? 0,
+      tieTotal: tieTotals[name] ?? 0,
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.tieTotal !== a.tieTotal) return b.tieTotal - a.tieTotal;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+const convex = new ConvexReactClient(getConvexUrl());
+const convexApi = api as any;
+
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function Dots() {
   return (
@@ -113,7 +176,7 @@ function ModelTag({ model, small }: { model: Model; small?: boolean }) {
   );
 }
 
-// ── Prompt ───────────────────────────────────────────────────────────────────
+// â”€â”€ Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PromptCard({ round }: { round: RoundState }) {
   if (round.phase === "prompting" && !round.prompt) {
@@ -150,7 +213,7 @@ function PromptCard({ round }: { round: RoundState }) {
   );
 }
 
-// ── Contestant ───────────────────────────────────────────────────────────────
+// â”€â”€ Contestant â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ContestantCard({
   task,
@@ -275,19 +338,15 @@ function ContestantCard({
   );
 }
 
-// ── Arena ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Arena â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function Arena({
   round,
   total,
-  myVote,
-  onVote,
   viewerVotingSecondsLeft,
 }: {
   round: RoundState;
   total: number | null;
-  myVote: "A" | "B" | null;
-  onVote: (side: "A" | "B") => void;
   viewerVotingSecondsLeft: number;
 }) {
   const [contA, contB] = round.contestants;
@@ -304,12 +363,6 @@ function Arena({
   const votersA = round.votes.filter((v) => v.votedFor?.name === contA.name);
   const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
   const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
-
-  const canVote =
-    round.phase === "voting" &&
-    viewerVotingSecondsLeft > 0 &&
-    round.answerTasks[0].finishedAt &&
-    round.answerTasks[1].finishedAt;
 
   const showCountdown = round.phase === "voting" && viewerVotingSecondsLeft > 0;
 
@@ -339,6 +392,12 @@ function Arena({
 
       <PromptCard round={round} />
 
+      {round.phase === "voting" && (
+        <div className="chat-vote-hint">
+          Vote no chat: <strong>1</strong> para esquerda, <strong>2</strong> para direita
+        </div>
+      )}
+
       {round.phase !== "prompting" && (
         <div className="showdown">
           <ContestantCard
@@ -350,9 +409,6 @@ function Arena({
             voters={votersA}
             viewerVotes={round.viewerVotesA}
             totalViewerVotes={totalViewerVotes}
-            votable={!!canVote}
-            onVote={() => onVote("A")}
-            isMyVote={myVote === "A"}
           />
           <ContestantCard
             task={round.answerTasks[1]}
@@ -363,9 +419,6 @@ function Arena({
             voters={votersB}
             viewerVotes={round.viewerVotesB}
             totalViewerVotes={totalViewerVotes}
-            votable={!!canVote}
-            onVote={() => onVote("B")}
-            isMyVote={myVote === "B"}
           />
         </div>
       )}
@@ -377,28 +430,59 @@ function Arena({
   );
 }
 
-// ── Game Over ────────────────────────────────────────────────────────────────
+// â”€â”€ Game Over â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function GameOver({ scores }: { scores: Record<string, number> }) {
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const champion = sorted[0];
+function GameOver({
+  scores,
+  humanScores,
+  humanVoteTotals,
+}: {
+  scores: Record<string, number>;
+  humanScores: Record<string, number>;
+  humanVoteTotals: Record<string, number>;
+}) {
+  const modelNames = collectRankingNames(scores, humanScores, humanVoteTotals);
+  const iaChampion = rankByScore(scores, {}, modelNames)[0];
+  const humanChampion = rankByScore(humanScores, humanVoteTotals, modelNames).find(
+    (entry) => entry.score > 0,
+  );
 
   return (
     <div className="game-over">
       <div className="game-over__label">Fim de jogo</div>
-      {champion && champion[1] > 0 && (
+      {iaChampion && iaChampion.score > 0 && (
         <div className="game-over__winner">
           <span className="game-over__crown">👑</span>
           <span
             className="game-over__name"
-            style={{ color: getColor(champion[0]) }}
+            style={{ color: getColor(iaChampion.name) }}
           >
-            {getLogo(champion[0]) && <img src={getLogo(champion[0])!} alt="" />}
-            {champion[0]}
+            {getLogo(iaChampion.name) && <img src={getLogo(iaChampion.name)!} alt="" />}
+            {iaChampion.name}
           </span>
           <span className="game-over__sub">e a IA mais engracada</span>
         </div>
       )}
+      <div className="game-over__winner game-over__winner--human">
+        <span className="game-over__crown">👥</span>
+        {humanChampion ? (
+          <>
+            <span
+              className="game-over__name"
+              style={{ color: getColor(humanChampion.name) }}
+            >
+              {getLogo(humanChampion.name) && <img src={getLogo(humanChampion.name)!} alt="" />}
+              {humanChampion.name}
+            </span>
+            <span className="game-over__sub">campeao da votacao da plateia</span>
+          </>
+        ) : (
+          <>
+            <span className="game-over__name game-over__name--empty">Sem campeao da plateia</span>
+            <span className="game-over__sub">ainda sem vitoria humana acumulada</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -407,13 +491,20 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
 function Standings({
   scores,
+  humanScores,
+  humanVoteTotals,
   activeRound,
 }: {
   scores: Record<string, number>;
+  humanScores: Record<string, number>;
+  humanVoteTotals: Record<string, number>;
   activeRound: RoundState | null;
 }) {
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const maxScore = sorted[0]?.[1] || 1;
+  const modelNames = collectRankingNames(scores, humanScores, humanVoteTotals);
+  const iaSorted = rankByScore(scores, {}, modelNames);
+  const humanSorted = rankByScore(humanScores, humanVoteTotals, modelNames);
+  const maxIaScore = iaSorted[0]?.score || 1;
+  const maxHumanScore = humanSorted[0]?.score || 1;
 
   const competing = activeRound
     ? new Set([
@@ -427,7 +518,7 @@ function Standings({
       <div className="standings__head">
         <span className="standings__title">Classificacao</span>
         <div className="standings__links">
-          <a href="/history" className="standings__link">
+          <a href="/history.html" className="standings__link">
             Historico
           </a>
           <a href="https://twitch.tv/papotorto" target="_blank" rel="noopener noreferrer" className="standings__link">
@@ -438,36 +529,68 @@ function Standings({
           </a>
         </div>
       </div>
-      <div className="standings__list">
-        {sorted.map(([name, score], i) => {
-          const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-          const color = getColor(name);
-          const active = competing.has(name);
-          return (
-            <div
-              key={name}
-              className={`standing ${active ? "standing--active" : ""}`}
-            >
-              <span className="standing__rank">
-                {i === 0 && score > 0 ? "👑" : i + 1}
-              </span>
-              <ModelTag model={{ id: name, name }} small />
-              <div className="standing__bar">
-                <div
-                  className="standing__fill"
-                  style={{ width: `${pct}%`, background: color }}
-                />
+
+      <div className="standings__section">
+        <div className="standings__section-title">Ranking da Plateia</div>
+        <div className="standings__list">
+          {humanSorted.map((entry, i) => {
+            const pct = maxHumanScore > 0 ? Math.round((entry.score / maxHumanScore) * 100) : 0;
+            const color = getColor(entry.name);
+            const active = competing.has(entry.name);
+            return (
+              <div
+                key={`human-${entry.name}`}
+                className={`standing ${active ? "standing--active" : ""}`}
+              >
+                <span className="standing__rank">
+                  {i === 0 && entry.score > 0 ? "👥" : i + 1}
+                </span>
+                <ModelTag model={{ id: entry.name, name: entry.name }} small />
+                <div className="standing__bar">
+                  <div
+                    className="standing__fill"
+                    style={{ width: `${pct}%`, background: color }}
+                  />
+                </div>
+                <span className="standing__score">{entry.score}</span>
               </div>
-              <span className="standing__score">{score}</span>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="standings__section">
+        <div className="standings__section-title">Ranking das IAs</div>
+        <div className="standings__list">
+          {iaSorted.map((entry, i) => {
+            const pct = maxIaScore > 0 ? Math.round((entry.score / maxIaScore) * 100) : 0;
+            const color = getColor(entry.name);
+            const active = competing.has(entry.name);
+            return (
+              <div
+                key={`ia-${entry.name}`}
+                className={`standing ${active ? "standing--active" : ""}`}
+              >
+                <span className="standing__rank">
+                  {i === 0 && entry.score > 0 ? "👑" : i + 1}
+                </span>
+                <ModelTag model={{ id: entry.name, name: entry.name }} small />
+                <div className="standing__bar">
+                  <div
+                    className="standing__fill"
+                    style={{ width: `${pct}%`, background: color }}
+                  />
+                </div>
+                <span className="standing__score">{entry.score}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </aside>
   );
 }
-
-// ── Conectando ───────────────────────────────────────────────────────────────
+// â”€â”€ Conectando â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ConnectingScreen() {
   return (
@@ -483,26 +606,21 @@ function ConnectingScreen() {
   );
 }
 
-// ── App ──────────────────────────────────────────────────────────────────────
+// â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function App() {
-  const [state, setState] = useState<GameState | null>(null);
-  const [totalRounds, setTotalRounds] = useState<number | null>(null);
-  const [viewerCount, setViewerCount] = useState(0);
-  const [connected, setConnected] = useState(false);
-  const [myVote, setMyVote] = useState<"A" | "B" | null>(null);
-  const [votedRound, setVotedRound] = useState<number | null>(null);
   const [viewerVotingSecondsLeft, setViewerVotingSecondsLeft] = useState(0);
-  const wsRef = React.useRef<WebSocket | null>(null);
+  const viewerIdRef = React.useRef<string | null>(null);
 
-  // Reset vote when round changes
-  useEffect(() => {
-    const currentRound = state?.active?.num ?? null;
-    if (currentRound !== null && currentRound !== votedRound) {
-      setMyVote(null);
-      setVotedRound(null);
-    }
-  }, [state?.active?.num, votedRound]);
+  const liveState = useQuery(convexApi.live.getState, {}) as
+    | { data: GameState; totalRounds: number | null; viewerCount: number }
+    | undefined;
+  const ensureStarted = useMutation(convexApi.live.ensureStarted);
+  const heartbeat = useMutation(convexApi.viewers.heartbeat);
+
+  const state = liveState?.data ?? null;
+  const totalRounds = liveState?.totalRounds ?? null;
+  const viewerCount = liveState?.viewerCount ?? 0;
 
   // Countdown timer for viewer voting
   useEffect(() => {
@@ -522,54 +640,19 @@ function App() {
   }, [state?.active?.viewerVotingEndsAt, state?.active?.phase]);
 
   useEffect(() => {
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-    let ws: WebSocket;
-    let reconnectTimer: ReturnType<typeof setTimeout>;
-
-    let knownVersion: string | null = null;
-    function connect() {
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => {
-        setConnected(false);
-        wsRef.current = null;
-        reconnectTimer = setTimeout(connect, 2000);
-      };
-      ws.onmessage = (e) => {
-        const msg: ServerMessage = JSON.parse(e.data);
-        if (msg.type === "state") {
-          if (msg.version) {
-            if (!knownVersion) knownVersion = msg.version;
-            else if (knownVersion !== msg.version) return location.reload();
-          }
-          setState(msg.data);
-          setTotalRounds(msg.totalRounds);
-          setViewerCount(msg.viewerCount);
-        } else if (msg.type === "viewerCount") {
-          setViewerCount(msg.viewerCount);
-        } else if (msg.type === "votedAck") {
-          setMyVote(msg.votedFor);
-        }
-      };
-    }
-
-    connect();
+    const viewerId = getOrCreateViewerId();
+    viewerIdRef.current = viewerId;
+    void ensureStarted({});
+    void heartbeat({ viewerId, page: "live" });
+    const interval = setInterval(() => {
+      void heartbeat({ viewerId, page: "live" });
+    }, 10_000);
     return () => {
-      clearTimeout(reconnectTimer);
-      ws?.close();
+      clearInterval(interval);
     };
-  }, []);
+  }, [ensureStarted, heartbeat]);
 
-  const handleVote = (side: "A" | "B") => {
-    if (myVote === side || !wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ type: "vote", votedFor: side }));
-    setMyVote(side);
-    setVotedRound(state?.active?.num ?? null);
-  };
-
-  if (!connected || !state) return <ConnectingScreen />;
+  if (!liveState || !state) return <ConnectingScreen />;
 
   const isNextPrompting =
     state.active?.phase === "prompting" && !state.active.prompt;
@@ -601,13 +684,15 @@ function App() {
           </header>
 
           {state.done ? (
-            <GameOver scores={state.scores} />
+            <GameOver
+              scores={state.scores}
+              humanScores={state.humanScores ?? {}}
+              humanVoteTotals={state.humanVoteTotals ?? {}}
+            />
           ) : displayRound ? (
             <Arena
               round={displayRound}
               total={totalRounds}
-              myVote={myVote}
-              onVote={handleVote}
               viewerVotingSecondsLeft={viewerVotingSecondsLeft}
             />
           ) : (
@@ -626,13 +711,22 @@ function App() {
           )}
         </main>
 
-        <Standings scores={state.scores} activeRound={state.active} />
+        <Standings
+          scores={state.scores}
+          humanScores={state.humanScores ?? {}}
+          humanVoteTotals={state.humanVoteTotals ?? {}}
+          activeRound={state.active}
+        />
       </div>
     </div>
   );
 }
 
-// ── Mount ────────────────────────────────────────────────────────────────────
+// â”€â”€ Mount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const root = createRoot(document.getElementById("root")!);
-root.render(<App />);
+root.render(
+  <ConvexProvider client={convex}>
+    <App />
+  </ConvexProvider>,
+);

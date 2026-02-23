@@ -28,13 +28,15 @@ body {
   position: absolute;
   top: 32px;
   left: 48px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -1px;
-  color: var(--text);
+  display: inline-flex;
   text-decoration: none;
   z-index: 10;
+}
+
+.main-logo img {
+  height: 24px;
+  width: auto;
+  display: block;
 }
 
 .main {

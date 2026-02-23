@@ -1,3 +1,6 @@
+import { ConvexClient } from "convex/browser";
+import { api } from "./convex/_generated/api";
+
 type Model = { id: string; name: string };
 type TaskInfo = {
   model: Model;
@@ -32,6 +35,8 @@ type GameState = {
   lastCompleted: RoundState | null;
   active: RoundState | null;
   scores: Record<string, number>;
+  humanScores: Record<string, number>;
+  humanVoteTotals: Record<string, number>;
   done: boolean;
   isPaused: boolean;
   generation: number;
@@ -50,12 +55,12 @@ type ViewerCountMessage = {
 type ServerMessage = StateMessage | ViewerCountMessage;
 
 const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3.1 Pro": "#4285F4",
+  "Gemini 3 Flash": "#4285F4",
   "Kimi K2": "#00E599",
   "DeepSeek 3.2": "#4D6BFE",
+  "Qwen 3.5 Plus": "#E67E22",
   "GLM-5": "#1F63EC",
   "GPT-5.2": "#10A37F",
-  "Opus 4.6": "#D97757",
   "Sonnet 4.6": "#D97757",
   "Grok 4.1": "#FFFFFF",
   "MiniMax 2.5": "#FF3B30",
@@ -79,10 +84,10 @@ let state: GameState | null = null;
 let totalRounds: number | null = null;
 let viewerCount = 0;
 let connected = false;
-let ws: WebSocket | null = null;
-let reconnectTimer: number | null = null;
-let lastMessageAt = 0;
-let knownVersion: string | null = null;
+const convex = new ConvexClient(getConvexUrl());
+const convexApi = api as any;
+let liveUnsubscribe: { unsubscribe: () => void } | null = null;
+let heartbeatTimer: number | null = null;
 
 function getColor(name: string): string {
   return MODEL_COLORS[name] ?? "#aeb6d6";
@@ -92,6 +97,7 @@ function getLogoUrl(name: string): string | null {
   if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
   if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
   if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
+  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
   if (name.includes("GLM")) return "/assets/logos/glm.svg";
   if (name.includes("GPT")) return "/assets/logos/openai.svg";
   if (name.includes("Opus") || name.includes("Sonnet")) return "/assets/logos/claude.svg";
@@ -101,6 +107,9 @@ function getLogoUrl(name: string): string | null {
 }
 
 const logoCache: Record<string, HTMLImageElement> = {};
+const brandLogo = new Image();
+brandLogo.src = "/assets/logo.svg";
+
 function drawModelLogo(name: string, x: number, y: number, size: number): boolean {
   const url = getLogoUrl(name);
   if (!url) return false;
@@ -117,45 +126,87 @@ function drawModelLogo(name: string, x: number, y: number, size: number): boolea
   return false;
 }
 
-function setupWebSocket() {
-  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-  ws = new WebSocket(wsUrl);
+function getConvexUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  const url = env?.VITE_CONVEX_URL;
+  if (!url) throw new Error("VITE_CONVEX_URL is not configured");
+  return url.replace(/\/$/, "");
+}
 
-  ws.onopen = () => {
-    connected = true;
-    setStatus("WS conectado");
-  };
+function getOrCreateViewerId(): string {
+  const key = "papotorto.viewerId";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const generated = crypto.randomUUID();
+  window.localStorage.setItem(key, generated);
+  return generated;
+}
 
-  ws.onclose = () => {
-    connected = false;
-    setStatus("WS reconectando...");
-    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-    reconnectTimer = window.setTimeout(setupWebSocket, 1_000);
-  };
+type RankingEntry = {
+  name: string;
+  score: number;
+  tieTotal: number;
+};
 
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(String(e.data)) as ServerMessage;
-      if (msg.type === "state") {
-        if (msg.version) {
-          if (!knownVersion) knownVersion = msg.version;
-          else if (knownVersion !== msg.version) return location.reload();
-        }
-        state = msg.data;
-        totalRounds =
-          Number.isFinite(msg.totalRounds) && msg.totalRounds >= 0
-            ? msg.totalRounds
-            : null;
-        viewerCount = msg.viewerCount;
-        lastMessageAt = Date.now();
-      } else if (msg.type === "viewerCount") {
-        viewerCount = msg.viewerCount;
-      }
-    } catch {
-      // Ignore malformed spectator payloads.
+function collectRankingNames(...records: Record<string, number>[]): string[] {
+  const names = new Set<string>();
+  for (const record of records) {
+    for (const name of Object.keys(record)) {
+      names.add(name);
     }
-  };
+  }
+  return [...names];
+}
+
+function rankByScore(
+  scores: Record<string, number>,
+  tieTotals: Record<string, number>,
+  fallbackNames: string[],
+): RankingEntry[] {
+  const names = new Set<string>([
+    ...fallbackNames,
+    ...Object.keys(scores),
+    ...Object.keys(tieTotals),
+  ]);
+  return [...names]
+    .map((name) => ({
+      name,
+      score: scores[name] ?? 0,
+      tieTotal: tieTotals[name] ?? 0,
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.tieTotal !== a.tieTotal) return b.tieTotal - a.tieTotal;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function setupRealtime() {
+  const viewerId = getOrCreateViewerId();
+  void convex.mutation(convexApi.live.ensureStarted, {});
+  void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
+
+  if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+  heartbeatTimer = window.setInterval(() => {
+    void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
+  }, 10_000);
+
+  liveUnsubscribe?.unsubscribe();
+  liveUnsubscribe = convex.onUpdate(
+    convexApi.live.getState,
+    {},
+    (payload: { data: GameState; totalRounds: number | null; viewerCount: number }) => {
+      connected = true;
+      state = payload.data;
+      totalRounds = payload.totalRounds;
+      viewerCount = payload.viewerCount;
+      setStatus("Convex conectado");
+    },
+    () => {
+      connected = false;
+      setStatus("Convex desconectado");
+    },
+  );
 }
 
 function setStatus(value: string) {
@@ -288,59 +339,81 @@ function drawHeader() {
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.font = '700 40px "Inter", sans-serif';
-  ctx.fillStyle = "#ededed";
-  ctx.fillText("PapoTorto", 48, 76);
+  if (brandLogo.complete && brandLogo.naturalHeight !== 0) {
+    const logoHeight = 34;
+    const logoWidth = (brandLogo.naturalWidth / brandLogo.naturalHeight) * logoHeight;
+    ctx.drawImage(brandLogo, 48, 44, logoWidth, logoHeight);
+  } else {
+    ctx.font = '700 40px "Inter", sans-serif';
+    ctx.fillStyle = "#ededed";
+    ctx.fillText("PapoTorto", 48, 76);
+  }
 
 }
 
-function drawScoreboard(scores: Record<string, number>) {
-  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  
+function drawRankingSection(
+  title: string,
+  entries: RankingEntry[],
+  maxScore: number,
+  startY: number,
+  iconForLeader: string,
+) {
+  ctx.font = '700 15px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#888";
+  ctx.fillText(title, WIDTH - 348, startY);
+
+  entries.slice(0, 7).forEach((entry, index) => {
+    const y = startY + 30 + index * 56;
+    const color = getColor(entry.name);
+    const pct = maxScore > 0 ? entry.score / maxScore : 0;
+
+    ctx.font = '600 18px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#888";
+    const rank = index === 0 && entry.score > 0 ? iconForLeader : String(index + 1);
+    ctx.fillText(rank, WIDTH - 348, y + 20);
+
+    ctx.font = '600 18px "Inter", sans-serif';
+    ctx.fillStyle = color;
+    const nameText = entry.name.length > 17 ? `${entry.name.slice(0, 17)}...` : entry.name;
+
+    const drewLogo = drawModelLogo(entry.name, WIDTH - 304, y + 2, 20);
+    if (drewLogo) {
+      ctx.fillText(nameText, WIDTH - 304 + 28, y + 20);
+    } else {
+      ctx.fillText(nameText, WIDTH - 304, y + 20);
+    }
+
+    roundRect(WIDTH - 304, y + 34, 208, 4, 2, "#1c1c1c");
+    if (pct > 0) {
+      roundRect(WIDTH - 304, y + 34, Math.max(8, 208 * pct), 4, 2, color);
+    }
+
+    ctx.font = '700 18px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#888";
+    const scoreText = String(entry.score);
+    const scoreWidth = ctx.measureText(scoreText).width;
+    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 20);
+  });
+}
+
+function drawScoreboard(
+  scores: Record<string, number>,
+  humanScores: Record<string, number>,
+  humanVoteTotals: Record<string, number>,
+) {
+  const names = collectRankingNames(scores, humanScores, humanVoteTotals);
+  const humanEntries = rankByScore(humanScores, humanVoteTotals, names);
+  const iaEntries = rankByScore(scores, {}, names);
+  const maxHuman = humanEntries[0]?.score || 1;
+  const maxIa = iaEntries[0]?.score || 1;
+
   roundRect(WIDTH - 380, 0, 380, HEIGHT, 0, "#111");
   ctx.fillStyle = "#1c1c1c";
   ctx.fillRect(WIDTH - 380, 0, 1, HEIGHT);
 
-  ctx.font = '700 18px "JetBrains Mono", monospace';
-  ctx.fillStyle = "#888";
-  ctx.fillText("CLASSIFICACAO", WIDTH - 348, 76);
-
-  const maxScore = entries[0]?.[1] || 1;
-
-  entries.slice(0, 10).forEach(([name, score], index) => {
-    const y = 140 + index * 68;
-    const color = getColor(name);
-    const pct = maxScore > 0 ? (score / maxScore) : 0;
-
-    ctx.font = '600 20px "JetBrains Mono", monospace';
-    ctx.fillStyle = "#888";
-    const rank = index === 0 && score > 0 ? "👑" : String(index + 1);
-    ctx.fillText(rank, WIDTH - 348, y + 24);
-
-    ctx.font = '600 20px "Inter", sans-serif';
-    ctx.fillStyle = color;
-    const nameText = name.length > 18 ? `${name.slice(0, 18)}...` : name;
-
-    const drewLogo = drawModelLogo(name, WIDTH - 304, y + 6, 24);
-    if (drewLogo) {
-      ctx.fillText(nameText, WIDTH - 304 + 32, y + 24);
-    } else {
-      ctx.fillText(nameText, WIDTH - 304, y + 24);
-    }
-
-    roundRect(WIDTH - 304, y + 42, 208, 4, 2, "#1c1c1c");
-    if (pct > 0) {
-      roundRect(WIDTH - 304, y + 42, Math.max(8, 208 * pct), 4, 2, color);
-    }
-
-    ctx.font = '700 20px "JetBrains Mono", monospace';
-    ctx.fillStyle = "#888";
-    const scoreText = String(score);
-    const scoreWidth = ctx.measureText(scoreText).width;
-    ctx.fillText(scoreText, WIDTH - 48 - scoreWidth, y + 24);
-  });
+  drawRankingSection("RANKING PLATEIA", humanEntries, maxHuman, 70, "👥");
+  drawRankingSection("RANKING IA", iaEntries, maxIa, 520, "👑");
 }
-
 function drawRound(round: RoundState) {
   const mainW = WIDTH - 380;
 
@@ -577,30 +650,54 @@ function drawWaiting() {
   ctx.fillText(text, (mainW - tw) / 2, HEIGHT / 2);
 }
 
-function drawDone(scores: Record<string, number>) {
+function drawDone(
+  scores: Record<string, number>,
+  humanScores: Record<string, number>,
+  humanVoteTotals: Record<string, number>,
+) {
   const mainW = WIDTH - 380;
-  const winner = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
-  if (!winner) return;
-  const [name, points] = winner;
-  
+  const names = collectRankingNames(scores, humanScores, humanVoteTotals);
+  const iaChampion = rankByScore(scores, {}, names)[0];
+  const humanChampion = rankByScore(humanScores, humanVoteTotals, names).find((entry) => entry.score > 0);
+
   ctx.font = '700 20px "JetBrains Mono", monospace';
   ctx.fillStyle = "#444";
   const go = "FIM DE JOGO";
   const gow = ctx.measureText(go).width;
-  ctx.fillText(go, (mainW - gow) / 2, HEIGHT / 2 - 100);
+  ctx.fillText(go, (mainW - gow) / 2, HEIGHT / 2 - 150);
 
-  ctx.font = '400 80px "DM Serif Display", serif';
-  ctx.fillStyle = getColor(name);
-  const nw = ctx.measureText(name).width;
-  ctx.fillText(name, (mainW - nw) / 2, HEIGHT / 2);
+  if (iaChampion && iaChampion.score > 0) {
+    ctx.font = '600 20px "JetBrains Mono", monospace';
+    ctx.fillStyle = "#888";
+    const iaLabel = "CAMPEAO IA";
+    const iaLabelW = ctx.measureText(iaLabel).width;
+    ctx.fillText(iaLabel, (mainW - iaLabelW) / 2, HEIGHT / 2 - 92);
 
-  ctx.font = '600 24px "Inter", sans-serif';
+    ctx.font = '400 62px "DM Serif Display", serif';
+    ctx.fillStyle = getColor(iaChampion.name);
+    const iaNameW = ctx.measureText(iaChampion.name).width;
+    ctx.fillText(iaChampion.name, (mainW - iaNameW) / 2, HEIGHT / 2 - 24);
+  }
+
+  ctx.font = '600 20px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
-  const wins = `e a IA mais engracada`;
-  const ww = ctx.measureText(wins).width;
-  ctx.fillText(wins, (mainW - ww) / 2, HEIGHT / 2 + 60);
-}
+  const humanLabel = "CAMPEAO PLATEIA";
+  const humanLabelW = ctx.measureText(humanLabel).width;
+  ctx.fillText(humanLabel, (mainW - humanLabelW) / 2, HEIGHT / 2 + 52);
 
+  if (humanChampion) {
+    ctx.font = '400 58px "DM Serif Display", serif';
+    ctx.fillStyle = getColor(humanChampion.name);
+    const humanNameW = ctx.measureText(humanChampion.name).width;
+    ctx.fillText(humanChampion.name, (mainW - humanNameW) / 2, HEIGHT / 2 + 122);
+  } else {
+    ctx.font = '600 28px "Inter", sans-serif';
+    ctx.fillStyle = "#666";
+    const none = "Sem campeao da plateia";
+    const noneW = ctx.measureText(none).width;
+    ctx.fillText(none, (mainW - noneW) / 2, HEIGHT / 2 + 112);
+  }
+}
 function draw() {
   drawHeader();
   if (!state) {
@@ -608,13 +705,21 @@ function draw() {
       return;
   }
 
-  drawScoreboard(state.scores);
+  drawScoreboard(
+    state.scores ?? {},
+    state.humanScores ?? {},
+    state.humanVoteTotals ?? {},
+  );
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound = isNextPrompting && state.lastCompleted ? state.lastCompleted : (state.active ?? state.lastCompleted ?? null);
 
   if (state.done) {
-    drawDone(state.scores);
+    drawDone(
+      state.scores ?? {},
+      state.humanScores ?? {},
+      state.humanVoteTotals ?? {},
+    );
   } else if (displayRound) {
     drawRound(displayRound);
   } else {
@@ -640,10 +745,11 @@ function startCanvasCaptureSink() {
   const fps = Number.parseInt(params.get("captureFps") ?? "30", 10);
   const bitRate = Number.parseInt(params.get("captureBitrate") ?? "12000000", 10);
   const stream = canvas.captureStream(Number.isFinite(fps) && fps > 0 ? fps : 30);
-  const socket = new WebSocket(sink);
-  socket.binaryType = "arraybuffer";
+  const sinkUrl = sink;
 
   let recorder: MediaRecorder | null = null;
+  let queuedBytes = 0;
+  let pendingSend = Promise.resolve();
   const mimeCandidates = [
     "video/webm;codecs=vp8",
     "video/webm;codecs=vp9",
@@ -652,33 +758,49 @@ function startCanvasCaptureSink() {
   const mimeType =
     mimeCandidates.find((value) => MediaRecorder.isTypeSupported(value)) ?? "";
 
-  socket.onopen = () => {
-    const options: MediaRecorderOptions = {
-      videoBitsPerSecond: Number.isFinite(bitRate) && bitRate > 0 ? bitRate : 12_000_000,
-    };
-    if (mimeType) options.mimeType = mimeType;
-
-    recorder = new MediaRecorder(stream, options);
-    recorder.ondataavailable = async (event) => {
-      if (event.data.size === 0) return;
-      if (socket.readyState !== WebSocket.OPEN) return;
-      if (socket.bufferedAmount > 16_000_000) return;
-      const chunk = await event.data.arrayBuffer();
-      socket.send(chunk);
-    };
-    recorder.onerror = () => {
-      setStatus("Erro no gravador");
-    };
-    recorder.start(250);
-    setStatus(`captura->ws ${fps}fps`);
+  const options: MediaRecorderOptions = {
+    videoBitsPerSecond: Number.isFinite(bitRate) && bitRate > 0 ? bitRate : 12_000_000,
   };
+  if (mimeType) options.mimeType = mimeType;
 
-  socket.onclose = () => {
-    recorder?.stop();
-    setStatus("sink de captura fechado");
+  recorder = new MediaRecorder(stream, options);
+  recorder.ondataavailable = async (event) => {
+    if (event.data.size === 0) return;
+    if (queuedBytes > 16_000_000) return;
+    const chunk = await event.data.arrayBuffer();
+    queuedBytes += chunk.byteLength;
+    pendingSend = pendingSend
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const response = await fetch(sinkUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: chunk,
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        } catch {
+          setStatus("falha ao enviar chunk");
+        } finally {
+          queuedBytes -= chunk.byteLength;
+        }
+      });
   };
+  recorder.onerror = () => {
+    setStatus("Erro no gravador");
+  };
+  recorder.start(250);
+  setStatus(`captura->http ${fps}fps`);
 }
 
-setupWebSocket();
+setupRealtime();
 startCanvasCaptureSink();
 renderLoop();
+
+window.addEventListener("beforeunload", () => {
+  liveUnsubscribe?.unsubscribe();
+  if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+  void convex.close();
+});

@@ -6,28 +6,25 @@ import { join } from "node:path";
 // ── Models ──────────────────────────────────────────────────────────────────
 
 export const MODELS = [
-  { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+  { id: "google/gemini-3-flash", name: "Gemini 3 Flash" },
   { id: "moonshotai/kimi-k2", name: "Kimi K2" },
-  // { id: "moonshotai/kimi-k2.5", name: "Kimi K2.5" },
   { id: "deepseek/deepseek-v3.2", name: "DeepSeek 3.2" },
-  // { id: "z-ai/glm-5", name: "GLM-5" },
+  { id: "qwen/qwen3.5-plus-02-15", name: "Qwen 3.5 Plus" },
+  { id: "z-ai/glm-5", name: "GLM-5" },
   { id: "openai/gpt-5.2", name: "GPT-5.2" },
-  { id: "anthropic/claude-opus-4.6", name: "Opus 4.6" },
   { id: "anthropic/claude-sonnet-4.6", name: "Sonnet 4.6" },
   { id: "x-ai/grok-4.1-fast", name: "Grok 4.1" },
-  // { id: "minimax/minimax-m2.5", name: "MiniMax 2.5" },
 ] as const;
 
 export type Model = (typeof MODELS)[number];
 
 export const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3.1 Pro": "cyan",
+  "Gemini 3 Flash": "cyan",
   "Kimi K2": "green",
-  "Kimi K2.5": "magenta",
   "DeepSeek 3.2": "greenBright",
+  "Qwen 3.5 Plus": "magenta",
   "GLM-5": "cyanBright",
   "GPT-5.2": "yellow",
-  "Opus 4.6": "blue",
   "Sonnet 4.6": "red",
   "Grok 4.1": "white",
   "MiniMax 2.5": "magentaBright",
@@ -263,7 +260,6 @@ export async function callVote(
   return cleaned.startsWith("A") ? "A" : "B";
 }
 
-import { saveRound } from "./db.ts";
 
 // ── Game loop ───────────────────────────────────────────────────────────────
 
@@ -272,6 +268,7 @@ export async function runGame(
   state: GameState,
   rerender: () => void,
   onViewerVotingStart?: () => void,
+  onRoundCompleted?: (round: RoundState) => void | Promise<void>,
 ) {
   let startRound = 1;
   const lastCompletedRound = state.completed.at(-1);
@@ -479,7 +476,7 @@ export async function runGame(
     }
 
     // Archive round
-    saveRound(round);
+    await onRoundCompleted?.(round);
     state.completed = [...state.completed, round];
     state.active = null;
     rerender();

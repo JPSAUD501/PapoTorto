@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="ptc-back" x1="27" y1="34" x2="85" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7A8CFF"/>
+      <stop offset="1" stop-color="#4F66F5"/>
+    </linearGradient>
+    <linearGradient id="ptc-front" x1="43" y1="50" x2="103" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2A26F"/>
+      <stop offset="1" stop-color="#D97757"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="108" height="108" rx="28" fill="#0B0D12" stroke="#FFFFFF" stroke-width="2"/>
+
+  <path d="M39 34H73A12 12 0 0 1 85 46V66A12 12 0 0 1 73 78H61L49 90V78H39A12 12 0 0 1 27 66V46A12 12 0 0 1 39 34Z" fill="url(#ptc-back)"/>
+  <path d="M89 50H55A12 12 0 0 0 43 62V82A12 12 0 0 0 55 94H67L79 106V94H89A12 12 0 0 0 101 82V62A12 12 0 0 0 89 50Z" fill="url(#ptc-front)" stroke="#FFFFFF" stroke-width="2"/>
+
+  <path d="M68 83C61.4 83 56 77.6 56 71C56 64.4 61.4 59 68 59" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+</svg>

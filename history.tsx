@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { createRoot } from "react-dom/client";
+import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery } from "convex/react";
+import { api } from "./convex/_generated/api";
 import "./history.css";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -20,6 +22,7 @@ type VoteInfo = {
   error?: boolean;
 };
 type RoundState = {
+  _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
   prompter: Model;
@@ -37,12 +40,12 @@ type RoundState = {
 // ── Shared UI Utils ─────────────────────────────────────────────────────────
 
 const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3.1 Pro": "#4285F4",
+  "Gemini 3 Flash": "#4285F4",
   "Kimi K2": "#00E599",
   "DeepSeek 3.2": "#4D6BFE",
+  "Qwen 3.5 Plus": "#E67E22",
   "GLM-5": "#1F63EC",
   "GPT-5.2": "#10A37F",
-  "Opus 4.6": "#D97757",
   "Sonnet 4.6": "#D97757",
   "Grok 4.1": "#FFFFFF",
   "MiniMax 2.5": "#FF3B30",
@@ -56,6 +59,7 @@ function getLogo(name: string): string | null {
   if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
   if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
   if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
+  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
   if (name.includes("GLM")) return "/assets/logos/glm.svg";
   if (name.includes("GPT")) return "/assets/logos/openai.svg";
   if (name.includes("Opus") || name.includes("Sonnet"))
@@ -64,6 +68,25 @@ function getLogo(name: string): string | null {
   if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
   return null;
 }
+
+function getConvexUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  const url = env?.VITE_CONVEX_URL;
+  if (!url) throw new Error("VITE_CONVEX_URL is not configured");
+  return url.replace(/\/$/, "");
+}
+
+function getOrCreateViewerId(): string {
+  const key = "papotorto.viewerId";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const generated = crypto.randomUUID();
+  window.localStorage.setItem(key, generated);
+  return generated;
+}
+
+const convex = new ConvexReactClient(getConvexUrl());
+const convexApi = api as any;
 
 function ModelName({
   model,
@@ -263,46 +286,43 @@ function HistoryCard({ round }: { round: RoundState }) {
 // ── App ─────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [rounds, setRounds] = useState<RoundState[]>([]);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { results, status, loadMore } = usePaginatedQuery(
+    convexApi.history.listPaginated,
+    {},
+    { initialNumItems: 10 },
+  );
+  const rounds = results as RoundState[];
 
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/history?page=${page}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setRounds(data.rounds);
-        setTotalPages(data.totalPages || 1);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, [page]);
+  const ensureStarted = useMutation(convexApi.live.ensureStarted);
+  const heartbeat = useMutation(convexApi.viewers.heartbeat);
+
+  React.useEffect(() => {
+    const viewerId = getOrCreateViewerId();
+    void ensureStarted({});
+    void heartbeat({ viewerId, page: "live" });
+    const interval = setInterval(() => {
+      void heartbeat({ viewerId, page: "live" });
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [ensureStarted, heartbeat]);
 
   return (
     <div className="app">
-      <a href="/" className="main-logo">
-        PapoTorto
+      <a href="/index.html" className="main-logo">
+        <img src="/assets/logo.svg" alt="PapoTorto" />
       </a>
       <main className="main">
         <div className="page-header">
           <div className="page-title">Rodadas Anteriores</div>
           <div className="page-links">
-            <a href="/" className="back-link">
-              ← Voltar ao Jogo
+            <a href="/index.html" className="back-link">
+              Voltar ao Jogo
             </a>
           </div>
         </div>
 
-        {loading ? (
+        {status === "LoadingFirstPage" ? (
           <div className="loading">Carregando...</div>
-        ) : error ? (
-          <div className="error">{error}</div>
         ) : rounds.length === 0 ? (
           <div className="empty">Nenhuma rodada anterior encontrada.</div>
         ) : (
@@ -312,28 +332,18 @@ function App() {
               style={{ display: "flex", flexDirection: "column", gap: "32px" }}
             >
               {rounds.map((r) => (
-                <HistoryCard key={r.num + "-" + Math.random()} round={r} />
+                <HistoryCard key={r._id ?? String(r.num)} round={r} />
               ))}
             </div>
 
-            {totalPages > 1 && (
+            {(status === "CanLoadMore" || status === "LoadingMore") && (
               <div className="pagination">
                 <button
                   className="pagination__btn"
-                  disabled={page === 1}
-                  onClick={() => setPage((p) => p - 1)}
+                  disabled={status !== "CanLoadMore"}
+                  onClick={() => loadMore(10)}
                 >
-                  ANTERIOR
-                </button>
-                <span className="pagination__info">
-                  Pagina {page} de {totalPages}
-                </span>
-                <button
-                  className="pagination__btn"
-                  disabled={page === totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  PROXIMA
+                  {status === "LoadingMore" ? "Carregando..." : "Carregar Mais"}
                 </button>
               </div>
             )}
@@ -343,8 +353,12 @@ function App() {
     </div>
   );
 }
-
 // ── Mount ───────────────────────────────────────────────────────────────────
 
 const root = createRoot(document.getElementById("root")!);
-root.render(<App />);
+root.render(
+  <ConvexProvider client={convex}>
+    <App />
+  </ConvexProvider>,
+);
+

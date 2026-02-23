@@ -15,6 +15,26 @@ type AdminResponse = { ok: true } & AdminSnapshot;
 type Mode = "checking" | "locked" | "ready";
 
 const RESET_TOKEN = "RESET";
+const ADMIN_PASSCODE_KEY = "papotorto.adminPasscode";
+
+function getConvexUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  const url = env?.VITE_CONVEX_URL;
+  if (!url) throw new Error("VITE_CONVEX_URL is not configured");
+  return url.replace(/\/$/, "");
+}
+
+function readStoredPasscode(): string {
+  return window.localStorage.getItem(ADMIN_PASSCODE_KEY) ?? "";
+}
+
+function writeStoredPasscode(passcode: string) {
+  if (!passcode) {
+    window.localStorage.removeItem(ADMIN_PASSCODE_KEY);
+    return;
+  }
+  window.localStorage.setItem(ADMIN_PASSCODE_KEY, passcode);
+}
 
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
@@ -24,14 +44,16 @@ async function readErrorMessage(res: Response): Promise<string> {
 
 async function requestAdminJson(
   path: string,
+  passcode: string,
   init?: RequestInit,
 ): Promise<AdminResponse> {
   const headers = new Headers(init?.headers);
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  headers.set("x-admin-passcode", passcode);
 
-  const response = await fetch(path, {
+  const response = await fetch(`${getConvexUrl()}${path}`, {
     ...init,
     headers,
     cache: "no-store",
@@ -64,8 +86,15 @@ function App() {
 
   useEffect(() => {
     let mounted = true;
+    const storedPasscode = readStoredPasscode();
+    if (!storedPasscode) {
+      setMode("locked");
+      return () => {
+        mounted = false;
+      };
+    }
 
-    requestAdminJson("/api/admin/status")
+    requestAdminJson("/admin/status", storedPasscode)
       .then((data) => {
         if (!mounted) return;
         setSnapshot(data);
@@ -89,10 +118,10 @@ function App() {
     setError(null);
     setPending("login");
     try {
-      const data = await requestAdminJson("/api/admin/login", {
+      const data = await requestAdminJson("/admin/login", passcode, {
         method: "POST",
-        body: JSON.stringify({ passcode }),
       });
+      writeStoredPasscode(passcode);
       setSnapshot(data);
       setPasscode("");
       setMode("ready");
@@ -107,7 +136,8 @@ function App() {
     setError(null);
     setPending(task);
     try {
-      const data = await requestAdminJson(path, { method: "POST" });
+      const passcode = readStoredPasscode();
+      const data = await requestAdminJson(path, passcode, { method: "POST" });
       setSnapshot(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha na acao de admin";
@@ -126,7 +156,13 @@ function App() {
     setError(null);
     setPending("export");
     try {
-      const response = await fetch("/api/admin/export", { cache: "no-store" });
+      const passcode = readStoredPasscode();
+      const response = await fetch(`${getConvexUrl()}/admin/export`, {
+        cache: "no-store",
+        headers: {
+          "x-admin-passcode": passcode,
+        },
+      });
       if (!response.ok) {
         throw new Error(await readErrorMessage(response));
       }
@@ -161,9 +197,9 @@ function App() {
     setError(null);
     setPending("reset");
     try {
-      const data = await requestAdminJson("/api/admin/reset", {
+      const passcode = readStoredPasscode();
+      const data = await requestAdminJson("/admin/reset", passcode, {
         method: "POST",
-        body: JSON.stringify({ confirm: RESET_TOKEN }),
       });
       setSnapshot(data);
       setResetText("");
@@ -179,10 +215,7 @@ function App() {
     setError(null);
     setPending("logout");
     try {
-      await fetch("/api/admin/logout", {
-        method: "POST",
-        cache: "no-store",
-      });
+      writeStoredPasscode("");
       setSnapshot(null);
       setPasscode("");
       setMode("locked");
@@ -203,13 +236,12 @@ function App() {
     return (
       <div className="admin admin--centered">
         <main className="panel panel--login">
-          <a href="/" className="logo-link">
+          <a href="/index.html" className="logo-link">
             <img src="/assets/logo.svg" alt="PapoTorto" />
           </a>
           <h1>Acesso Admin</h1>
           <p className="muted">
-            Digite sua senha uma vez. Um cookie seguro vai manter este navegador
-            conectado.
+            Digite sua senha de admin para liberar os controles.
           </p>
 
           <form
@@ -248,8 +280,8 @@ function App() {
           {error && <div className="error-banner">{error}</div>}
 
           <div className="quick-links">
-            <a href="/">Jogo Ao Vivo</a>
-            <a href="/history">Historico</a>
+            <a href="/index.html">Jogo Ao Vivo</a>
+            <a href="/history.html">Historico</a>
           </div>
         </main>
       </div>
@@ -259,12 +291,12 @@ function App() {
   return (
     <div className="admin">
       <header className="admin-header">
-        <a href="/" className="logo-link">
-          PapoTorto
+        <a href="/index.html" className="logo-link">
+          <img src="/assets/logo.svg" alt="PapoTorto" />
         </a>
         <nav className="quick-links">
-          <a href="/">Jogo Ao Vivo</a>
-          <a href="/history">Historico</a>
+          <a href="/index.html">Jogo Ao Vivo</a>
+          <a href="/history.html">Historico</a>
           <button className="link-button" onClick={onLogout} disabled={busy}>
             Sair
           </button>
@@ -303,7 +335,7 @@ function App() {
             type="button"
             className="btn btn--primary"
             disabled={busy || Boolean(snapshot?.isPaused)}
-            onClick={() => runControl("/api/admin/pause", "pause")}
+            onClick={() => runControl("/admin/pause", "pause")}
           >
             {pending === "pause" ? "Pausando..." : "Pausar"}
           </button>
@@ -311,7 +343,7 @@ function App() {
             type="button"
             className="btn"
             disabled={busy || !snapshot?.isPaused}
-            onClick={() => runControl("/api/admin/resume", "resume")}
+            onClick={() => runControl("/admin/resume", "resume")}
           >
             {pending === "resume" ? "Retomando..." : "Retomar"}
           </button>

@@ -14,7 +14,7 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 
 function usage(): never {
   console.error("Usage: bun scripts/stream-browser.ts <live|dryrun>");
-  console.error("Required for live mode: TWITCH_STREAM_KEY");
+  console.error("Required for live mode: STREAM_RTMP_TARGET");
   process.exit(1);
 }
 
@@ -36,14 +36,14 @@ const maxrate = process.env.STREAM_MAXRATE ?? "6000k";
 const bufsize = process.env.STREAM_BUFSIZE ?? "12000k";
 const gop = String(parsePositiveInt(process.env.STREAM_GOP, 60));
 const audioBitrate = process.env.STREAM_AUDIO_BITRATE ?? "160k";
-const streamKey = process.env.TWITCH_STREAM_KEY;
+const streamRtmpTarget = process.env.STREAM_RTMP_TARGET?.trim() ?? "";
+const streamOutputTarget = streamRtmpTarget;
 const serverPort = process.env.STREAM_APP_PORT ?? "5109";
-const broadcastUrl = process.env.BROADCAST_URL ?? `http://127.0.0.1:${serverPort}/broadcast`;
+const broadcastUrl = process.env.BROADCAST_URL ?? `http://127.0.0.1:${serverPort}/broadcast.html`;
 const redactionTokens = [
   broadcastUrl,
-  streamKey,
-  streamKey ? encodeURIComponent(streamKey) : undefined,
-  streamKey ? `rtmp://live.twitch.tv/app/${streamKey}` : undefined,
+  streamRtmpTarget,
+  streamOutputTarget,
 ].filter((token): token is string => Boolean(token));
 const redactionWindow = Math.max(1, ...redactionTokens.map((token) => token.length));
 
@@ -55,8 +55,8 @@ function redactSensitive(value: string): string {
   return output;
 }
 
-if (mode === "live" && !streamKey) {
-  console.error("TWITCH_STREAM_KEY is not set.");
+if (mode === "live" && !streamOutputTarget) {
+  console.error("STREAM_RTMP_TARGET is not set.");
   process.exit(1);
 }
 
@@ -72,7 +72,7 @@ async function assertBroadcastReachable(url: string) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Cannot reach broadcast page (${redactSensitive(detail)}). Start the app server first (bun run start or bun run start:web).`,
+      `Cannot reach broadcast page (${redactSensitive(detail)}). Start the app server first (bun run preview:web or bun run dev:web).`,
     );
   } finally {
     clearTimeout(timeout);
@@ -131,7 +131,7 @@ function buildFfmpegArgs(currentMode: Mode): string[] {
   ];
 
   if (currentMode === "live") {
-    args.push("-f", "flv", `rtmp://live.twitch.tv/app/${streamKey}`);
+    args.push("-f", "flv", streamOutputTarget);
     return args;
   }
 
@@ -240,37 +240,19 @@ async function main() {
 
   const chunkServer = Bun.serve({
     port: 0,
-    fetch(req, server) {
+    async fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === "/chunks" && server.upgrade(req)) {
-        return;
-      }
-      return new Response("Not found", { status: 404 });
-    },
-    websocket: {
-      message(_ws, message) {
+      if (url.pathname === "/chunks" && req.method === "POST") {
         if (!ffmpegWritable || !ffmpeg.stdin || typeof ffmpeg.stdin === "number") {
-          return;
+          return new Response("stream closed", { status: 503 });
         }
-        if (typeof message === "string") return;
-
-        let chunk: Uint8Array | null = null;
-        if (message instanceof ArrayBuffer) {
-          chunk = new Uint8Array(message);
-        } else if (ArrayBuffer.isView(message)) {
-          chunk = new Uint8Array(
-            message.buffer,
-            message.byteOffset,
-            message.byteLength,
-          );
-        }
-        if (!chunk) return;
-
         try {
-          ffmpeg.stdin.write(chunk);
+          const payload = await req.arrayBuffer();
+          ffmpeg.stdin.write(new Uint8Array(payload));
           firstChunkResolve?.();
           firstChunkResolve = null;
           firstChunkReject = null;
+          return new Response("ok", { status: 200 });
         } catch (error) {
           ffmpegWritable = false;
           const detail = error instanceof Error ? error : new Error(String(error));
@@ -278,8 +260,10 @@ async function main() {
           firstChunkResolve = null;
           firstChunkReject = null;
           void shutdown?.();
+          return new Response("write failed", { status: 500 });
         }
-      },
+      }
+      return new Response("Not found", { status: 404 });
     },
   });
 
@@ -304,7 +288,7 @@ async function main() {
   });
 
   const captureUrl = new URL(broadcastUrl);
-  captureUrl.searchParams.set("sink", `ws://127.0.0.1:${chunkServer.port}/chunks`);
+  captureUrl.searchParams.set("sink", `http://127.0.0.1:${chunkServer.port}/chunks`);
   captureUrl.searchParams.set("captureFps", String(streamFps));
   captureUrl.searchParams.set("captureBitrate", String(captureBitrate));
 

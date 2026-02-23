@@ -1,14 +1,20 @@
-FROM oven/bun:1 AS base
+FROM oven/bun:1 AS build
 WORKDIR /app
 
-# Install dependencies
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
+RUN bun install --frozen-lockfile
 
-# Copy source
 COPY . .
+RUN bun run build:web
+
+FROM oven/bun:1-slim AS runner
+WORKDIR /app
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY package.json ./
 
 ENV NODE_ENV=production
-EXPOSE ${PORT:-5109}
+EXPOSE 5109
 
-CMD ["bun", "server.ts"]
+CMD ["bun", "run", "preview:web"]

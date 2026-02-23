@@ -1,0 +1,236 @@
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+const convexInternal = internal as any;
+
+const http = httpRouter();
+
+function getAllowedOrigins(): string[] {
+  const raw = process.env.ALLOWED_ORIGINS;
+  if (!raw) return ["*"];
+  return raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function corsHeaders(request: Request): Record<string, string> {
+  const allowed = getAllowedOrigins();
+  const origin = request.headers.get("origin") ?? "";
+  const allowOrigin =
+    allowed.includes("*") || (origin && allowed.includes(origin)) ? origin || "*" : allowed[0] || "*";
+
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Content-Type,x-admin-passcode,x-fossabot-token,x-fossabot-validateurl,x-fossabot-message-userprovider,x-fossabot-message-userproviderid,x-fossabot-message-userlogin",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
+
+function json(request: Request, body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders(request),
+    },
+  });
+}
+
+function text(request: Request, body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...corsHeaders(request),
+    },
+  });
+}
+
+function isAuthorized(request: Request): boolean {
+  const expected = process.env.ADMIN_PASSCODE;
+  if (!expected) return false;
+  const provided = request.headers.get("x-admin-passcode") ?? "";
+  return Boolean(provided) && provided === expected;
+}
+
+function parseVote(raw: string | null): "A" | "B" | null {
+  const value = (raw ?? "").trim().toUpperCase();
+  if (value === "1" || value === "A") return "A";
+  if (value === "2" || value === "B") return "B";
+  return null;
+}
+
+function getFossabotViewerId(request: Request): string | null {
+  const provider = (request.headers.get("x-fossabot-message-userprovider") ?? "").trim().toLowerCase();
+  const providerId = (request.headers.get("x-fossabot-message-userproviderid") ?? "").trim();
+  if (!provider || !providerId) return null;
+  return `${provider}:${providerId}`;
+}
+
+async function validateFossabotRequest(request: Request): Promise<boolean> {
+  const enabled = (process.env.FOSSABOT_VALIDATE_REQUESTS ?? "true").trim().toLowerCase();
+  if (enabled === "false" || enabled === "0" || enabled === "off") {
+    return true;
+  }
+
+  const headerValidateUrl = (request.headers.get("x-fossabot-validateurl") ?? "").trim();
+  const token = (request.headers.get("x-fossabot-token") ?? "").trim();
+  const validateUrl = headerValidateUrl || (token ? `https://api.fossabot.com/v2/customapi/validate/${token}` : "");
+  if (!validateUrl) return false;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(validateUrl, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function withOptions(handler: (ctx: any, request: Request) => Promise<Response>) {
+  return httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(request),
+      });
+    }
+    return handler(ctx, request);
+  });
+}
+
+http.route({
+  path: "/admin/login",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Invalid passcode", 401);
+    }
+
+    await ctx.runMutation(convexInternal.live.ensureStartedInternal, {});
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/status",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/pause",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.admin.pause, {});
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, action: "Paused", ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/resume",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.admin.resume, {});
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, action: "Resumed", ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/reset",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.admin.reset, {});
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/export",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    const data = await ctx.runQuery(convexInternal.admin.getExportData, {});
+    return new Response(JSON.stringify(data, null, 2), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="papotorto-export-${Date.now()}.json"`,
+        ...corsHeaders(request),
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/fossabot/vote",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    const valid = await validateFossabotRequest(request);
+    if (!valid) {
+      return text(request, "voto rejeitado", 403);
+    }
+
+    const viewerId = getFossabotViewerId(request);
+    if (!viewerId) {
+      return text(request, "usuario invalido", 400);
+    }
+
+    const url = new URL(request.url);
+    const side = parseVote(url.searchParams.get("vote"));
+    if (!side) {
+      return text(request, "vote com 1 ou 2", 400);
+    }
+
+    await ctx.runMutation(convexInternal.live.ensureStartedInternal, {});
+    const result = await ctx.runMutation(convexInternal.viewers.castVoteInternal, {
+      viewerId,
+      side,
+    });
+
+    if (!result.ok) {
+      return text(request, "votacao indisponivel", 200);
+    }
+
+    if (result.status === "updated") {
+      return text(request, side === "A" ? "voto alterado para 1" : "voto alterado para 2", 200);
+    }
+    if (result.status === "unchanged") {
+      return text(request, side === "A" ? "voto 1 ja registrado" : "voto 2 ja registrado", 200);
+    }
+    return text(request, side === "A" ? "voto 1 registrado" : "voto 2 registrado", 200);
+  }),
+});
+
+export default http;
+
