@@ -104,7 +104,7 @@ function HistoryContestant({
       </div>
       <div className="history-contestant__votes">
         <div className="history-contestant__score" style={{ color }}>
-          {votes} {votes === 1 ? "vote" : "votes"}
+          {votes} {votes === 1 ? "voto" : "votos"}
         </div>
         <div className="history-contestant__voters">
           {voters.map((v) => {
@@ -164,7 +164,7 @@ function HistoryCard({ round }: { round: RoundState }) {
       <div className="history-card__header">
         <div className="history-card__prompt-section">
           <div className="history-card__prompter">
-            Prompted by <ModelName model={round.prompter} />
+            Prompt de <ModelName model={round.prompter} />
           </div>
           <div className="history-card__prompt">{round.prompt}</div>
         </div>
@@ -180,7 +180,7 @@ function HistoryCard({ round }: { round: RoundState }) {
           <div className="history-contestant__header">
             <ModelName model={contA} />
             {isAWinner && (
-              <div className="history-contestant__winner-badge">WINNER</div>
+              <div className="history-contestant__winner-badge">VENCEDOR</div>
             )}
           </div>
           <div className="history-contestant__answer">
@@ -191,7 +191,7 @@ function HistoryCard({ round }: { round: RoundState }) {
               className="history-contestant__score"
               style={{ color: getColor(contA.name) }}
             >
-              {votesA} {votesA === 1 ? "vote" : "votes"}
+              {votesA} {votesA === 1 ? "voto" : "votos"}
             </div>
             <div className="history-contestant__voters">
               {votersA.map(
@@ -210,7 +210,7 @@ function HistoryCard({ round }: { round: RoundState }) {
           {totalViewerVotes > 0 && (
             <ViewerVotes
               count={round.viewerVotesA ?? 0}
-              label={`viewer vote${(round.viewerVotesA ?? 0) === 1 ? "" : "s"}`}
+              label={`voto${(round.viewerVotesA ?? 0) === 1 ? "" : "s"} da plateia`}
             />
           )}
         </div>
@@ -221,7 +221,7 @@ function HistoryCard({ round }: { round: RoundState }) {
           <div className="history-contestant__header">
             <ModelName model={contB} />
             {isBWinner && (
-              <div className="history-contestant__winner-badge">WINNER</div>
+              <div className="history-contestant__winner-badge">VENCEDOR</div>
             )}
           </div>
           <div className="history-contestant__answer">
@@ -232,7 +232,7 @@ function HistoryCard({ round }: { round: RoundState }) {
               className="history-contestant__score"
               style={{ color: getColor(contB.name) }}
             >
-              {votesB} {votesB === 1 ? "vote" : "votes"}
+              {votesB} {votesB === 1 ? "voto" : "votos"}
             </div>
             <div className="history-contestant__voters">
               {votersB.map(
@@ -251,7 +251,7 @@ function HistoryCard({ round }: { round: RoundState }) {
           {totalViewerVotes > 0 && (
             <ViewerVotes
               count={round.viewerVotesB ?? 0}
-              label={`viewer vote${(round.viewerVotesB ?? 0) === 1 ? "" : "s"}`}
+              label={`voto${(round.viewerVotesB ?? 0) === 1 ? "" : "s"} da plateia`}
             />
           )}
         </div>
@@ -287,24 +287,24 @@ function App() {
   return (
     <div className="app">
       <a href="/" className="main-logo">
-        quipslop
+        PapoTorto
       </a>
       <main className="main">
         <div className="page-header">
-          <div className="page-title">Past Rounds</div>
+          <div className="page-title">Rodadas Anteriores</div>
           <div className="page-links">
             <a href="/" className="back-link">
-              ← Back to Game
+              ← Voltar ao Jogo
             </a>
           </div>
         </div>
 
         {loading ? (
-          <div className="loading">Loading...</div>
+          <div className="loading">Carregando...</div>
         ) : error ? (
           <div className="error">{error}</div>
         ) : rounds.length === 0 ? (
-          <div className="empty">No past rounds found.</div>
+          <div className="empty">Nenhuma rodada anterior encontrada.</div>
         ) : (
           <>
             <div
@@ -323,17 +323,17 @@ function App() {
                   disabled={page === 1}
                   onClick={() => setPage((p) => p - 1)}
                 >
-                  PREV
+                  ANTERIOR
                 </button>
                 <span className="pagination__info">
-                  Page {page} of {totalPages}
+                  Pagina {page} de {totalPages}
                 </span>
                 <button
                   className="pagination__btn"
                   disabled={page === totalPages}
                   onClick={() => setPage((p) => p + 1)}
                 >
-                  NEXT
+                  PROXIMA
                 </button>
               </div>
             )}

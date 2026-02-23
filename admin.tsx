@@ -19,7 +19,7 @@ const RESET_TOKEN = "RESET";
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
   if (text) return text;
-  return `Request failed (${res.status})`;
+  return `Falha na requisicao (${res.status})`;
 }
 
 async function requestAdminJson(
@@ -97,7 +97,7 @@ function App() {
       setPasscode("");
       setMode("ready");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to log in");
+      setError(err instanceof Error ? err.message : "Falha ao entrar");
     } finally {
       setPending(null);
     }
@@ -110,8 +110,9 @@ function App() {
       const data = await requestAdminJson(path, { method: "POST" });
       setSnapshot(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Admin action failed";
-      if (message.toLowerCase().includes("unauthorized")) {
+      const message = err instanceof Error ? err.message : "Falha na acao de admin";
+      const lowered = message.toLowerCase();
+      if (lowered.includes("unauthorized") || lowered.includes("nao autorizado")) {
         setMode("locked");
         setSnapshot(null);
       }
@@ -133,7 +134,7 @@ function App() {
       const blob = await response.blob();
       const disposition = response.headers.get("content-disposition") ?? "";
       const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
-      const fileName = fileNameMatch?.[1] ?? `quipslop-export-${Date.now()}.json`;
+      const fileName = fileNameMatch?.[1] ?? `papotorto-export-${Date.now()}.json`;
 
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -144,8 +145,9 @@ function App() {
       anchor.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Export failed";
-      if (message.toLowerCase().includes("unauthorized")) {
+      const message = err instanceof Error ? err.message : "Falha no export";
+      const lowered = message.toLowerCase();
+      if (lowered.includes("unauthorized") || lowered.includes("nao autorizado")) {
         setMode("locked");
         setSnapshot(null);
       }
@@ -167,7 +169,7 @@ function App() {
       setResetText("");
       setIsResetOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Reset failed");
+      setError(err instanceof Error ? err.message : "Falha no reset");
     } finally {
       setPending(null);
     }
@@ -192,7 +194,7 @@ function App() {
   if (mode === "checking") {
     return (
       <div className="admin admin--centered">
-        <div className="loading">Checking admin session...</div>
+        <div className="loading">Verificando sessao admin...</div>
       </div>
     );
   }
@@ -202,12 +204,12 @@ function App() {
       <div className="admin admin--centered">
         <main className="panel panel--login">
           <a href="/" className="logo-link">
-            <img src="/assets/logo.svg" alt="quipslop" />
+            <img src="/assets/logo.svg" alt="PapoTorto" />
           </a>
-          <h1>Admin Access</h1>
+          <h1>Acesso Admin</h1>
           <p className="muted">
-            Enter your passcode once. A secure cookie will keep this browser
-            logged in.
+            Digite sua senha uma vez. Um cookie seguro vai manter este navegador
+            conectado.
           </p>
 
           <form
@@ -218,7 +220,7 @@ function App() {
             data-lpignore="true"
           >
             <label htmlFor="passcode" className="field-label">
-              Passcode
+              Senha
             </label>
             <input
               id="passcode"
@@ -239,15 +241,15 @@ function App() {
               data-1p-ignore
               data-lpignore="true"
             >
-              {pending === "login" ? "Checking..." : "Unlock Admin"}
+              {pending === "login" ? "Verificando..." : "Desbloquear Admin"}
             </button>
           </form>
 
           {error && <div className="error-banner">{error}</div>}
 
           <div className="quick-links">
-            <a href="/">Live Game</a>
-            <a href="/history">History</a>
+            <a href="/">Jogo Ao Vivo</a>
+            <a href="/history">Historico</a>
           </div>
         </main>
       </div>
@@ -258,23 +260,23 @@ function App() {
     <div className="admin">
       <header className="admin-header">
         <a href="/" className="logo-link">
-          quipslop
+          PapoTorto
         </a>
         <nav className="quick-links">
-          <a href="/">Live Game</a>
-          <a href="/history">History</a>
+          <a href="/">Jogo Ao Vivo</a>
+          <a href="/history">Historico</a>
           <button className="link-button" onClick={onLogout} disabled={busy}>
-            Logout
+            Sair
           </button>
         </nav>
       </header>
 
       <main className="panel panel--main">
         <div className="panel-head">
-          <h1>Admin Console</h1>
+          <h1>Console Admin</h1>
           <p>
-            Pause/resume the game loop, export all data as JSON, or wipe all
-            stored data.
+            Pausar ou retomar o loop do jogo, exporte todos os dados em JSON ou
+            apague todos os dados salvos.
           </p>
         </div>
 
@@ -282,28 +284,28 @@ function App() {
 
         <section className="status-grid" aria-live="polite">
           <StatusCard
-            label="Engine"
-            value={snapshot?.isPaused ? "Paused" : "Running"}
+            label="Motor"
+            value={snapshot?.isPaused ? "Pausado" : "Rodando"}
           />
           <StatusCard
-            label="Active Round"
-            value={snapshot?.isRunningRound ? "In Progress" : "Idle"}
+            label="Rodada Ativa"
+            value={snapshot?.isRunningRound ? "Em Andamento" : "Parada"}
           />
           <StatusCard
-            label="Persisted Rounds"
+            label="Rodadas Persistidas"
             value={String(snapshot?.persistedRounds ?? 0)}
           />
-          <StatusCard label="Viewers" value={String(snapshot?.viewerCount ?? 0)} />
+          <StatusCard label="Espectadores" value={String(snapshot?.viewerCount ?? 0)} />
         </section>
 
-        <section className="actions" aria-label="Admin actions">
+        <section className="actions" aria-label="Acoes admin">
           <button
             type="button"
             className="btn btn--primary"
             disabled={busy || Boolean(snapshot?.isPaused)}
             onClick={() => runControl("/api/admin/pause", "pause")}
           >
-            {pending === "pause" ? "Pausing..." : "Pause"}
+            {pending === "pause" ? "Pausando..." : "Pausar"}
           </button>
           <button
             type="button"
@@ -311,10 +313,10 @@ function App() {
             disabled={busy || !snapshot?.isPaused}
             onClick={() => runControl("/api/admin/resume", "resume")}
           >
-            {pending === "resume" ? "Resuming..." : "Resume"}
+            {pending === "resume" ? "Retomando..." : "Retomar"}
           </button>
           <button type="button" className="btn" disabled={busy} onClick={onExport}>
-            {pending === "export" ? "Exporting..." : "Export JSON"}
+            {pending === "export" ? "Exportando..." : "Exportar JSON"}
           </button>
           <button
             type="button"
@@ -322,7 +324,7 @@ function App() {
             disabled={busy}
             onClick={() => setIsResetOpen(true)}
           >
-            Reset Data
+            Resetar Dados
           </button>
         </section>
       </main>
@@ -330,13 +332,13 @@ function App() {
       {isResetOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
-            <h2>Reset all data?</h2>
+            <h2>Resetar todos os dados?</h2>
             <p>
-              This permanently deletes every saved round and resets scores.
-              Current game flow is also paused.
+              Isso apaga permanentemente todas as rodadas salvas e zera a
+              pontuacao. O fluxo atual do jogo tambem e pausado.
             </p>
             <p>
-              Type <code>{RESET_TOKEN}</code> to continue.
+              Digite <code>{RESET_TOKEN}</code> para continuar.
             </p>
             <input
               type="text"
@@ -356,7 +358,7 @@ function App() {
                 }}
                 disabled={busy}
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 type="button"
@@ -364,7 +366,7 @@ function App() {
                 onClick={onReset}
                 disabled={busy || resetText !== RESET_TOKEN}
               >
-                {pending === "reset" ? "Resetting..." : "Confirm Reset"}
+                {pending === "reset" ? "Resetando..." : "Confirmar Reset"}
               </button>
             </div>
           </div>

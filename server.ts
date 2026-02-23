@@ -90,7 +90,7 @@ const MAX_HISTORY_CACHE_KEYS = parsePositiveInt(
   process.env.MAX_HISTORY_CACHE_KEYS,
   500,
 );
-const ADMIN_COOKIE = "quipslop_admin";
+const ADMIN_COOKIE = "papotorto_admin";
 const ADMIN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 const requestWindows = new Map<string, number[]>();
@@ -339,19 +339,19 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/api/admin/login") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "POST" },
         });
       }
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
         log("WARN", "http", "Admin login rate limited", { ip });
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
 
       const expected = process.env.ADMIN_SECRET;
       if (!expected) {
-        return new Response("ADMIN_SECRET is not configured", { status: 503 });
+        return new Response("ADMIN_SECRET nao configurado", { status: 503 });
       }
 
       let passcode = "";
@@ -359,11 +359,11 @@ const server = Bun.serve<WsData>({
         const body = await req.json();
         passcode = String((body as Record<string, unknown>).passcode ?? "");
       } catch {
-        return new Response("Invalid JSON body", { status: 400 });
+        return new Response("Corpo JSON invalido", { status: 400 });
       }
 
       if (!passcode || !secureCompare(passcode, expected)) {
-        return new Response("Invalid passcode", { status: 401 });
+        return new Response("Senha invalida", { status: 401 });
       }
 
       const isSecure = url.protocol === "https:";
@@ -379,7 +379,7 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/api/admin/logout") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "POST" },
         });
@@ -396,10 +396,10 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/api/admin/status") {
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       if (!isAdminAuthorized(req, url)) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Nao autorizado", { status: 401 });
       }
       return new Response(JSON.stringify({ ok: true, ...getAdminSnapshot() }), {
         status: 200,
@@ -412,16 +412,16 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/api/admin/export") {
       if (req.method !== "GET") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "GET" },
         });
       }
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       if (!isAdminAuthorized(req, url)) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Nao autorizado", { status: 401 });
       }
 
       const payload = {
@@ -434,23 +434,23 @@ const server = Bun.serve<WsData>({
         headers: {
           "Content-Type": "application/json",
           "Cache-Control": "no-store",
-          "Content-Disposition": `attachment; filename="quipslop-export-${Date.now()}.json"`,
+          "Content-Disposition": `attachment; filename="papotorto-export-${Date.now()}.json"`,
         },
       });
     }
 
     if (url.pathname === "/api/admin/reset") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "POST" },
         });
       }
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       if (!isAdminAuthorized(req, url)) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Nao autorizado", { status: 401 });
       }
 
       let confirm = "";
@@ -458,10 +458,10 @@ const server = Bun.serve<WsData>({
         const body = await req.json();
         confirm = String((body as Record<string, unknown>).confirm ?? "");
       } catch {
-        return new Response("Invalid JSON body", { status: 400 });
+        return new Response("Corpo JSON invalido", { status: 400 });
       }
       if (confirm !== "RESET") {
-        return new Response("Confirmation token must be RESET", {
+        return new Response("Token de confirmacao deve ser RESET", {
           status: 400,
         });
       }
@@ -493,16 +493,16 @@ const server = Bun.serve<WsData>({
       url.pathname === "/api/admin/resume"
     ) {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "POST" },
         });
       }
       if (isRateLimited(`admin:${ip}`, ADMIN_LIMIT_PER_MIN, WINDOW_MS)) {
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       if (!isAdminAuthorized(req, url)) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Nao autorizado", { status: 401 });
       }
 
       if (url.pathname.endsWith("/pause")) {
@@ -511,7 +511,7 @@ const server = Bun.serve<WsData>({
         gameState.isPaused = false;
       }
       broadcast();
-      const action = url.pathname.endsWith("/pause") ? "Paused" : "Resumed";
+      const action = url.pathname.endsWith("/pause") ? "Pausado" : "Retomado";
       if (url.pathname === "/api/pause" || url.pathname === "/api/resume") {
         return new Response(action, { status: 200 });
       }
@@ -530,7 +530,7 @@ const server = Bun.serve<WsData>({
     if (url.pathname === "/api/history") {
       if (isRateLimited(`history:${ip}`, HISTORY_LIMIT_PER_MIN, WINDOW_MS)) {
         log("WARN", "http", "History rate limited", { ip });
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       const rawPage = parseInt(url.searchParams.get("page") || "1", 10);
       const rawLimit = parseInt(url.searchParams.get("limit") || "10", 10);
@@ -572,7 +572,7 @@ const server = Bun.serve<WsData>({
 
     if (url.pathname === "/ws") {
       if (req.method !== "GET") {
-        return new Response("Method Not Allowed", {
+        return new Response("Metodo nao permitido", {
           status: 405,
           headers: { Allow: "GET" },
         });
@@ -583,7 +583,7 @@ const server = Bun.serve<WsData>({
         wsNewConnectionsResetAt = now + 1000;
       }
       if (wsNewConnections >= MAX_WS_NEW_PER_SEC) {
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
       if (clients.size >= MAX_WS_GLOBAL) {
         log("WARN", "ws", "Global WS limit reached, rejecting", {
@@ -591,7 +591,7 @@ const server = Bun.serve<WsData>({
           clients: clients.size,
           limit: MAX_WS_GLOBAL,
         });
-        return new Response("Service Unavailable", { status: 503 });
+        return new Response("Servico indisponivel", { status: 503 });
       }
       const existingForIp = wsByIp.get(ip) ?? 0;
       if (existingForIp >= MAX_WS_PER_IP) {
@@ -600,19 +600,19 @@ const server = Bun.serve<WsData>({
           existing: existingForIp,
           limit: MAX_WS_PER_IP,
         });
-        return new Response("Too Many Requests", { status: 429 });
+        return new Response("Muitas requisicoes", { status: 429 });
       }
 
       const upgraded = server.upgrade(req, { data: { ip } });
       if (!upgraded) {
-        log("WARN", "ws", "WebSocket upgrade failed", { ip });
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        log("WARN", "ws", "Falha no upgrade do WebSocket", { ip });
+        return new Response("Falha no upgrade do WebSocket", { status: 400 });
       }
       wsNewConnections++;
       return undefined;
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response("Nao encontrado", { status: 404 });
   },
   websocket: {
     data: {} as WsData,
@@ -688,11 +688,11 @@ const server = Bun.serve<WsData>({
       message: error.message,
       stack: error.stack,
     });
-    return new Response("Internal Server Error", { status: 500 });
+    return new Response("Erro interno do servidor", { status: 500 });
   },
 });
 
-console.log(`\n🎮 quipslop Web — http://localhost:${server.port}`);
+console.log(`\n🎮 PapoTorto Web — http://localhost:${server.port}`);
 console.log(`📡 WebSocket — ws://localhost:${server.port}/ws`);
 console.log(`🎯 ${runs} rounds with ${MODELS.length} models\n`);
 

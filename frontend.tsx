@@ -120,7 +120,7 @@ function PromptCard({ round }: { round: RoundState }) {
     return (
       <div className="prompt">
         <div className="prompt__by">
-          <ModelTag model={round.prompter} small /> is writing a prompt
+          <ModelTag model={round.prompter} small /> esta escrevendo um prompt
           <Dots />
         </div>
         <div className="prompt__text prompt__text--loading">
@@ -134,7 +134,7 @@ function PromptCard({ round }: { round: RoundState }) {
     return (
       <div className="prompt">
         <div className="prompt__text prompt__text--error">
-          Prompt generation failed
+          Falha ao gerar prompt
         </div>
       </div>
     );
@@ -143,7 +143,7 @@ function PromptCard({ round }: { round: RoundState }) {
   return (
     <div className="prompt">
       <div className="prompt__by">
-        Prompted by <ModelTag model={round.prompter} small />
+        Prompt de <ModelTag model={round.prompter} small />
       </div>
       <div className="prompt__text">{round.prompt}</div>
     </div>
@@ -195,8 +195,8 @@ function ContestantCard({
     >
       <div className="contestant__head">
         <ModelTag model={task.model} />
-        {isMyVote && !isWinner && <span className="my-vote-tag">YOUR PICK</span>}
-        {isWinner && <span className="win-tag">WIN</span>}
+        {isMyVote && !isWinner && <span className="my-vote-tag">SEU VOTO</span>}
+        {isWinner && <span className="win-tag">VENCEU</span>}
       </div>
 
       <div className="contestant__body">
@@ -224,7 +224,7 @@ function ContestantCard({
               {voteCount}
             </span>
             <span className="vote-meta__label">
-              vote{voteCount !== 1 ? "s" : ""}
+              voto{voteCount !== 1 ? "s" : ""}
             </span>
             <span className="vote-meta__dots">
               {voters.map((v, i) => {
@@ -263,7 +263,7 @@ function ContestantCard({
                   {viewerVotes ?? 0}
                 </span>
                 <span className="vote-meta__label">
-                  viewer vote{(viewerVotes ?? 0) !== 1 ? "s" : ""}
+                  voto{(viewerVotes ?? 0) !== 1 ? "s" : ""} da plateia
                 </span>
                 <span className="viewer-vote-meta__icon">👥</span>
               </div>
@@ -315,18 +315,18 @@ function Arena({
 
   const phaseText =
     round.phase === "prompting"
-      ? "Writing prompt"
+      ? "Escrevendo prompt"
       : round.phase === "answering"
-        ? "Answering"
+        ? "Respondendo"
         : round.phase === "voting"
-          ? "Judges voting"
-          : "Complete";
+          ? "Jurados votando"
+          : "Concluida";
 
   return (
     <div className="arena">
       <div className="arena__meta">
         <span className="arena__round">
-          Round {round.num}
+          Rodada {round.num}
           {total ? <span className="dim">/{total}</span> : null}
         </span>
         <span className="arena__phase">
@@ -371,7 +371,7 @@ function Arena({
       )}
 
       {isDone && votesA === votesB && totalVotes > 0 && (
-        <div className="tie-label">Tie</div>
+        <div className="tie-label">Empate</div>
       )}
     </div>
   );
@@ -385,7 +385,7 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
 
   return (
     <div className="game-over">
-      <div className="game-over__label">Game Over</div>
+      <div className="game-over__label">Fim de jogo</div>
       {champion && champion[1] > 0 && (
         <div className="game-over__winner">
           <span className="game-over__crown">👑</span>
@@ -396,7 +396,7 @@ function GameOver({ scores }: { scores: Record<string, number> }) {
             {getLogo(champion[0]) && <img src={getLogo(champion[0])!} alt="" />}
             {champion[0]}
           </span>
-          <span className="game-over__sub">is the funniest AI</span>
+          <span className="game-over__sub">e a IA mais engracada</span>
         </div>
       )}
     </div>
@@ -425,15 +425,15 @@ function Standings({
   return (
     <aside className="standings">
       <div className="standings__head">
-        <span className="standings__title">Standings</span>
+        <span className="standings__title">Classificacao</span>
         <div className="standings__links">
           <a href="/history" className="standings__link">
-            History
+            Historico
           </a>
-          <a href="https://twitch.tv/quipslop" target="_blank" rel="noopener noreferrer" className="standings__link">
+          <a href="https://twitch.tv/papotorto" target="_blank" rel="noopener noreferrer" className="standings__link">
             Twitch
           </a>
-          <a href="https://github.com/T3-Content/quipslop" target="_blank" rel="noopener noreferrer" className="standings__link">
+          <a href="https://github.com/JPSAUD501/PapoTorto" target="_blank" rel="noopener noreferrer" className="standings__link">
             GitHub
           </a>
         </div>
@@ -467,16 +467,16 @@ function Standings({
   );
 }
 
-// ── Connecting ───────────────────────────────────────────────────────────────
+// ── Conectando ───────────────────────────────────────────────────────────────
 
 function ConnectingScreen() {
   return (
     <div className="connecting">
       <div className="connecting__logo">
-        <img src="/assets/logo.svg" alt="quipslop" />
+        <img src="/assets/logo.svg" alt="PapoTorto" />
       </div>
       <div className="connecting__sub">
-        Connecting
+        Conectando
         <Dots />
       </div>
     </div>
@@ -582,7 +582,7 @@ function App() {
         <main className="main">
           <header className="header">
             <a href="/" className="logo">
-              <img src="/assets/logo.svg" alt="quipslop" />
+              <img src="/assets/logo.svg" alt="PapoTorto" />
             </a>
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               {state.isPaused && (
@@ -590,12 +590,12 @@ function App() {
                   className="viewer-pill"
                   style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}
                 >
-                  Paused
+                  Pausado
                 </div>
               )}
               <div className="viewer-pill" aria-live="polite">
                 <span className="viewer-pill__dot" />
-                {viewerCount} viewer{viewerCount === 1 ? "" : "s"} watching
+                {viewerCount} espectador{viewerCount === 1 ? "" : "es"} assistindo
               </div>
             </div>
           </header>
@@ -612,15 +612,15 @@ function App() {
             />
           ) : (
             <div className="waiting">
-              Starting
+              Iniciando
               <Dots />
             </div>
           )}
 
           {isNextPrompting && state.lastCompleted && (
             <div className="next-toast">
-              <ModelTag model={state.active!.prompter} small /> is writing the
-              next prompt
+              <ModelTag model={state.active!.prompter} small /> esta escrevendo o
+              proximo prompt
               <Dots />
             </div>
           )}

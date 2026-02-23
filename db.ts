@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { RoundState } from "./game.ts";
 
-const dbPath = process.env.DATABASE_PATH ?? "quipslop.sqlite";
+const dbPath = process.env.DATABASE_PATH ?? "papotorto.sqlite";
 export const db = new Database(dbPath, { create: true });
 
 db.exec(`

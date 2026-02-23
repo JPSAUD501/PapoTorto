@@ -1,3 +1,3 @@
-# Quipslop
+# PapoTorto
 
-Streamed live on [twitch.tv/quipslop](https://twitch.tv/quipslop).
+Streamed live on [twitch.tv/papotorto](https://twitch.tv/papotorto).

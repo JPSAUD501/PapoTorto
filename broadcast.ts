@@ -69,7 +69,7 @@ const statusEl = document.getElementById("broadcast-status") as HTMLDivElement;
 
 function get2dContext(el: HTMLCanvasElement): CanvasRenderingContext2D {
   const context = el.getContext("2d");
-  if (!context) throw new Error("2D canvas context unavailable");
+  if (!context) throw new Error("Contexto 2D do canvas indisponivel");
   return context;
 }
 
@@ -124,12 +124,12 @@ function setupWebSocket() {
 
   ws.onopen = () => {
     connected = true;
-    setStatus("WS connected");
+    setStatus("WS conectado");
   };
 
   ws.onclose = () => {
     connected = false;
-    setStatus("WS reconnecting...");
+    setStatus("WS reconectando...");
     if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
     reconnectTimer = window.setTimeout(setupWebSocket, 1_000);
   };
@@ -290,7 +290,7 @@ function drawHeader() {
 
   ctx.font = '700 40px "Inter", sans-serif';
   ctx.fillStyle = "#ededed";
-  ctx.fillText("quipslop", 48, 76);
+  ctx.fillText("PapoTorto", 48, 76);
 
 }
 
@@ -303,7 +303,7 @@ function drawScoreboard(scores: Record<string, number>) {
 
   ctx.font = '700 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
-  ctx.fillText("STANDINGS", WIDTH - 348, 76);
+  ctx.fillText("CLASSIFICACAO", WIDTH - 348, 76);
 
   const maxScore = entries[0]?.[1] || 1;
 
@@ -346,12 +346,12 @@ function drawRound(round: RoundState) {
 
   let phaseLabel =
     (round.phase === "prompting"
-      ? "Writing prompt"
+      ? "Escrevendo prompt"
       : round.phase === "answering"
-        ? "Answering"
+        ? "Respondendo"
         : round.phase === "voting"
-          ? "Judges voting"
-          : "Complete"
+          ? "Jurados votando"
+          : "Concluida"
     ).toUpperCase();
 
   // Append countdown during voting phase
@@ -363,7 +363,7 @@ function drawRound(round: RoundState) {
   ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const totalText = totalRounds !== null ? `/${totalRounds}` : "";
-  ctx.fillText(`Round ${round.num}${totalText}`, 64, 150);
+  ctx.fillText(`Rodada ${round.num}${totalText}`, 64, 150);
 
   ctx.fillStyle = "#888";
   const labelWidth = ctx.measureText(phaseLabel).width;
@@ -378,7 +378,7 @@ function drawRound(round: RoundState) {
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillStyle = "#888";
-  const promptedText = "PROMPTED BY ";
+  const promptedText = "PROMPT DE ";
   ctx.fillText(promptedText, 64, 210);
 
   const pTw = ctx.measureText(promptedText).width;
@@ -393,7 +393,7 @@ function drawRound(round: RoundState) {
 
   const promptText =
     round.prompt ??
-    (round.phase === "prompting" ? "Generating prompt..." : "Prompt unavailable");
+    (round.phase === "prompting" ? "Gerando prompt..." : "Prompt indisponivel");
 
   const promptFont = '400 56px "DM Serif Display", serif';
   const promptLineHeight = 72;
@@ -470,18 +470,18 @@ function drawContestantCard(
   if (isWinner) {
     ctx.font = '700 18px "JetBrains Mono", monospace';
     ctx.fillStyle = "#0a0a0a";
-    const winW = ctx.measureText("WIN").width;
+    const winW = ctx.measureText("VENCEU").width;
     roundRect(x + w - 24 - winW - 24, y + 16, winW + 24, 36, 6, "#ededed");
     ctx.fillStyle = "#0a0a0a";
-    ctx.fillText("WIN", x + w - 24 - winW - 12, y + 40);
+    ctx.fillText("VENCEU", x + w - 24 - winW - 12, y + 40);
   }
 
   const answer =
     !task.finishedAt && !task.result
-      ? "Writing answer..."
+      ? "Escrevendo resposta..."
       : task.error
         ? task.error
-        : task.result ?? "No answer";
+        : task.result ?? "Sem resposta";
 
   drawTextBlock(
     task.result ? `"${answer}"` : answer,
@@ -518,7 +518,7 @@ function drawContestantCard(
 
     ctx.font = '600 20px "JetBrains Mono", monospace';
     ctx.fillStyle = "#444";
-    const vTxt = `vote${voteCount === 1 ? "" : "s"}`;
+    const vTxt = `voto${voteCount === 1 ? "" : "s"}`;
     const vCountW = ctx.measureText(String(voteCount)).width;
     const vTxtW = ctx.measureText(vTxt).width;
     ctx.fillText(vTxt, x + 24 + vCountW + 8, modelVoteTextY - 1);
@@ -562,7 +562,7 @@ function drawContestantCard(
       const vvCountW = ctx.measureText(String(viewerVoteCount)).width;
       ctx.font = '600 16px "JetBrains Mono", monospace';
       ctx.fillStyle = "#444";
-      const vvTxt = `viewer vote${viewerVoteCount === 1 ? "" : "s"}`;
+      const vvTxt = `voto${viewerVoteCount === 1 ? "" : "s"} da plateia`;
       ctx.fillText(vvTxt, x + 24 + vvCountW + 8, y + h - 23);
     }
   }
@@ -572,7 +572,7 @@ function drawWaiting() {
   const mainW = WIDTH - 380;
   ctx.font = '400 48px "DM Serif Display", serif';
   ctx.fillStyle = "#888";
-  const text = "Waiting for game state...";
+  const text = "Aguardando estado do jogo...";
   const tw = ctx.measureText(text).width;
   ctx.fillText(text, (mainW - tw) / 2, HEIGHT / 2);
 }
@@ -585,7 +585,7 @@ function drawDone(scores: Record<string, number>) {
   
   ctx.font = '700 20px "JetBrains Mono", monospace';
   ctx.fillStyle = "#444";
-  const go = "GAME OVER";
+  const go = "FIM DE JOGO";
   const gow = ctx.measureText(go).width;
   ctx.fillText(go, (mainW - gow) / 2, HEIGHT / 2 - 100);
 
@@ -596,7 +596,7 @@ function drawDone(scores: Record<string, number>) {
 
   ctx.font = '600 24px "Inter", sans-serif';
   ctx.fillStyle = "#888";
-  const wins = `is the funniest AI`;
+  const wins = `e a IA mais engracada`;
   const ww = ctx.measureText(wins).width;
   ctx.fillText(wins, (mainW - ww) / 2, HEIGHT / 2 + 60);
 }
@@ -633,7 +633,7 @@ function startCanvasCaptureSink() {
   if (!sink) return;
 
   if (!("MediaRecorder" in window)) {
-    setStatus("MediaRecorder unavailable");
+    setStatus("MediaRecorder indisponivel");
     return;
   }
 
@@ -667,15 +667,15 @@ function startCanvasCaptureSink() {
       socket.send(chunk);
     };
     recorder.onerror = () => {
-      setStatus("Recorder error");
+      setStatus("Erro no gravador");
     };
     recorder.start(250);
-    setStatus(`capture->ws ${fps}fps`);
+    setStatus(`captura->ws ${fps}fps`);
   };
 
   socket.onclose = () => {
     recorder?.stop();
-    setStatus("capture sink closed");
+    setStatus("sink de captura fechado");
   };
 }
 

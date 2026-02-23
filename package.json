@@ -1,11 +1,11 @@
 {
-  "name": "quipslop",
+  "name": "papotorto",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "bun server.ts",
-    "start:cli": "bun quipslop.tsx",
+    "start:cli": "bun papotorto.tsx",
     "start:web": "bun --hot server.ts",
     "start:stream": "bun ./scripts/stream-browser.ts live",
     "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun"

@@ -190,13 +190,13 @@ import { ALL_PROMPTS } from "./prompts";
 
 function buildPromptSystem(): string {
   const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
-  return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).
+  return `Voce e roteirista de comedia para o jogo Quiplash. Gere um unico prompt engracado de preencher lacuna para os jogadores responderem. O prompt deve ser surpreendente e pensado para render respostas hilarias. Retorne APENAS o texto do prompt, nada alem disso. Mantenha curto (ate 15 palavras).
 
-Use a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." — mix it up! Here are examples of the range of styles:
+Use uma grande VARIEDADE de formatos de prompt. NAO use sempre "A pior coisa para..." - varie bastante! Aqui vao exemplos da faixa de estilos:
 
 ${examples.map((p) => `- ${p}`).join("\n")}
 
-Come up with something ORIGINAL — don't copy these examples.`;
+Crie algo ORIGINAL - nao copie estes exemplos.`;
 }
 
 export async function callGeneratePrompt(model: Model): Promise<string> {
@@ -206,7 +206,7 @@ export async function callGeneratePrompt(model: Model): Promise<string> {
     model: openrouter.chat(model.id),
     system,
     prompt:
-      "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+      "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
   });
 
   log("INFO", `prompt:${model.name}`, "Raw response", {
@@ -226,8 +226,8 @@ export async function callGenerateAnswer(
   });
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(model.id),
-    system: `You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer — no quotes, no explanation, no preamble. Keep it short (under 12 words). Keep it concise and witty.`,
-    prompt: `Fill in the blank: ${prompt}`,
+    system: `Voce esta jogando Quiplash! Voce recebera um prompt de preencher lacuna. De a resposta MAIS ENGRACADA possivel. Seja criativo, acido, inesperado e conciso. Responda APENAS com sua resposta - sem aspas, sem explicacao, sem introducao. Mantenha curto (ate 12 palavras). Seja direto e espirituoso.`,
+    prompt: `Preencha a lacuna: ${prompt}`,
   });
 
   log("INFO", `answer:${model.name}`, "Raw response", {
@@ -251,8 +251,8 @@ export async function callVote(
   });
   const { text, usage, reasoning } = await generateText({
     model: openrouter.chat(voter.id),
-    system: `You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly "A" or "B" — nothing else.`,
-    prompt: `Prompt: "${prompt}"\n\nAnswer A: "${a.answer}"\nAnswer B: "${b.answer}"\n\nWhich is funnier? Reply with just A or B.`,
+    system: `Voce e jurado em um jogo de comedia. Voce vera um prompt de preencher lacuna e duas respostas. Escolha qual resposta e MAIS ENGRACADA. Voce DEVE responder exatamente com "A" ou "B" - nada alem disso.`,
+    prompt: `Prompt: "${prompt}"\n\nResposta A: "${a.answer}"\nResposta B: "${b.answer}"\n\nQual e mais engracada? Responda apenas com A ou B.`,
   });
 
   log("INFO", `vote:${voter.name}`, "Raw response", { rawText: text, usage });
@@ -342,7 +342,7 @@ export async function runGame(
         continue;
       }
       round.promptTask.finishedAt = Date.now();
-      round.promptTask.error = "Failed after 3 attempts";
+      round.promptTask.error = "Falhou apos 3 tentativas";
       round.phase = "done";
       state.completed = [...state.completed, round];
       state.active = null;
@@ -377,8 +377,8 @@ export async function runGame(
           if (state.generation !== roundGeneration) {
             return;
           }
-          task.error = "Failed to answer";
-          task.result = "[no answer]";
+          task.error = "Falha ao responder";
+          task.result = "[sem resposta]";
         }
         if (state.generation !== roundGeneration) {
           return;
