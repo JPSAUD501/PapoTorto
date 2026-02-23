@@ -110,7 +110,7 @@ async function ensureStartedImpl(ctx: any) {
       runnerLeaseUntil: now + RUNNER_LEASE_MS,
       updatedAt: now,
     });
-    await ctx.scheduler.runAfter(0, convexInternal.engine.runLoop, { leaseId });
+    await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
   }
 
   const latestState = await getOrCreateEngineState(ctx as any);

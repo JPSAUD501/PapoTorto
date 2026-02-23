@@ -1,7 +1,8 @@
-import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
+import type { Doc } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { DEFAULT_SCORES } from "./constants";
 
-type AnyCtx = GenericMutationCtx<any> | GenericQueryCtx<any>;
+type EngineReadCtx = Pick<QueryCtx, "db">;
 
 export function normalizeScoreRecord(
   input?: Record<string, number>,
@@ -14,11 +15,15 @@ export function normalizeScoreRecord(
   return normalized;
 }
 
-export async function getEngineState(ctx: AnyCtx) {
+export async function getEngineState(
+  ctx: EngineReadCtx,
+): Promise<Doc<"engineState"> | null> {
   return await ctx.db.query("engineState").withIndex("by_key", (q) => q.eq("key", "main")).first();
 }
 
-export async function getOrCreateEngineState(ctx: GenericMutationCtx<any>) {
+export async function getOrCreateEngineState(
+  ctx: MutationCtx,
+): Promise<Doc<"engineState">> {
   const existing = await getEngineState(ctx);
   if (existing) return existing;
 

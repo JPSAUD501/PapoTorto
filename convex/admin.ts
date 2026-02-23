@@ -190,7 +190,7 @@ export const resume = internalMutation({
         runnerLeaseUntil: now + 60_000,
         updatedAt: now,
       });
-      await ctx.scheduler.runAfter(0, convexInternal.engine.runLoop, { leaseId });
+      await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
     }
 
     return null;

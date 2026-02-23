@@ -20,7 +20,11 @@ Sem SQLite, sem Postgres, sem WebSocket manual e sem Railway.
 
 ## Variaveis de ambiente
 
-Todas as envs configuraveis do projeto estao em `.env.example`.
+As envs configuraveis estao separadas por servico:
+
+- `.env.web.example`
+- `.env.convex.example`
+- `.env.stream.example`
 
 ### Web client
 
@@ -53,7 +57,10 @@ Todas as envs configuraveis do projeto estao em `.env.example`.
 bun install
 ```
 
-2. Configurar envs (copie de `.env.example`).
+2. Configurar envs:
+- web: copie de `.env.web.example`
+- convex: copie de `.env.convex.example`
+- stream-worker: copie de `.env.stream.example`
 
 3. Rodar Convex:
 
