@@ -8,13 +8,19 @@ import {
   DEFAULT_SCORES,
   POST_ROUND_DELAY_MS,
   RUNNER_LEASE_MS,
-  VIEWER_VOTE_WINDOW_MS,
+  VIEWER_VOTE_WINDOW_ACTIVE_MS,
+  VIEWER_VOTE_WINDOW_IDLE_MS,
   sleep,
   shuffle,
 } from "./constants";
 import { MODELS, type Model } from "../shared/models";
 import { callGenerateAnswer, callGeneratePrompt, callVote } from "./ai";
 import { getEngineState, getOrCreateEngineState, isFiniteRuns } from "./state";
+import { readTotalViewerCount } from "./viewerCount";
+
+function getVotingWindowMs(totalViewerCount: number): number {
+  return totalViewerCount > 0 ? VIEWER_VOTE_WINDOW_ACTIVE_MS : VIEWER_VOTE_WINDOW_IDLE_MS;
+}
 
 function pickRoundModels(): {
   prompter: Model;
@@ -249,12 +255,14 @@ export const startVoting = internalMutation({
     if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
 
     const voteStart = Date.now();
+    const totalViewerCount = await readTotalViewerCount(ctx as any);
+    const windowMs = getVotingWindowMs(totalViewerCount);
     const votes = args.voters.map((voter) => ({ voter, startedAt: voteStart }));
 
     await ctx.db.patch(args.roundId, {
       phase: "voting",
       votes,
-      viewerVotingEndsAt: Date.now() + VIEWER_VOTE_WINDOW_MS,
+      viewerVotingEndsAt: voteStart + windowMs,
       updatedAt: Date.now(),
     });
 
@@ -292,6 +300,35 @@ export const setModelVote = internalMutation({
       updatedAt: Date.now(),
     });
 
+    return true;
+  },
+});
+
+export const maybeShortenVotingWindow = internalMutation({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const state = await getEngineState(ctx as any);
+    if (!state?.activeRoundId) return false;
+
+    const round = await ctx.db.get(state.activeRoundId);
+    if (!round || round.phase !== "voting" || !round.viewerVotingEndsAt) return false;
+
+    const now = Date.now();
+    const remaining = round.viewerVotingEndsAt - now;
+    if (remaining <= VIEWER_VOTE_WINDOW_ACTIVE_MS) {
+      return false;
+    }
+
+    const totalViewerCount = await readTotalViewerCount(ctx as any);
+    if (totalViewerCount <= 0) {
+      return false;
+    }
+
+    await ctx.db.patch(round._id, {
+      viewerVotingEndsAt: now + VIEWER_VOTE_WINDOW_ACTIVE_MS,
+      updatedAt: now,
+    });
     return true;
   },
 });
@@ -499,43 +536,73 @@ export const runLoop = internalAction({
     const answerA = roundForVotes.answerTasks[0]?.result ?? "[no answer]";
     const answerB = roundForVotes.answerTasks[1]?.result ?? "[no answer]";
 
-    await Promise.all([
-      Promise.all(
-        voters.map(async (voter, voteIndex) => {
-          try {
-            const showAFirst = Math.random() > 0.5;
-            const first = showAFirst ? { answer: answerA } : { answer: answerB };
-            const second = showAFirst ? { answer: answerB } : { answer: answerA };
-            const result = await callVote(voter, roundForVotes.prompt ?? "", first, second);
-            if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+    let modelVotesDone = false;
+    const modelVotesPromise = Promise.all(
+      voters.map(async (voter, voteIndex) => {
+        try {
+          const showAFirst = Math.random() > 0.5;
+          const first = showAFirst ? { answer: answerA } : { answer: answerB };
+          const second = showAFirst ? { answer: answerB } : { answer: answerA };
+          const result = await callVote(voter, roundForVotes.prompt ?? "", first, second);
+          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
 
-            const votedForSide: "A" | "B" = showAFirst
-              ? result === "A"
-                ? "A"
-                : "B"
-              : result === "A"
-                ? "B"
-                : "A";
+          const votedForSide: "A" | "B" = showAFirst
+            ? result === "A"
+              ? "A"
+              : "B"
+            : result === "A"
+              ? "B"
+              : "A";
 
-            await ctx.runMutation(convexInternal.engine.setModelVote, {
-              expectedGeneration,
-              roundId,
-              voteIndex,
-              side: votedForSide,
-            });
-          } catch {
-            if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
-            await ctx.runMutation(convexInternal.engine.setModelVote, {
-              expectedGeneration,
-              roundId,
-              voteIndex,
-              error: true,
-            });
-          }
-        }),
-      ),
-      sleep(VIEWER_VOTE_WINDOW_MS),
-    ]);
+          await ctx.runMutation(convexInternal.engine.setModelVote, {
+            expectedGeneration,
+            roundId,
+            voteIndex,
+            side: votedForSide,
+          });
+        } catch {
+          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+          await ctx.runMutation(convexInternal.engine.setModelVote, {
+            expectedGeneration,
+            roundId,
+            voteIndex,
+            error: true,
+          });
+        }
+      }),
+    ).finally(() => {
+      modelVotesDone = true;
+    });
+
+    let windowClosed = false;
+    let lastLeaseRenewAt = Date.now();
+    while (!windowClosed || !modelVotesDone) {
+      if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
+
+      const latestRound = await ctx.runQuery(convexInternal.engine.getRoundForRunner, { roundId });
+      if (!latestRound || latestRound.phase !== "voting" || !latestRound.viewerVotingEndsAt) {
+        windowClosed = true;
+        if (!modelVotesDone) {
+          await sleep(300);
+        }
+      } else {
+        const remaining = latestRound.viewerVotingEndsAt - Date.now();
+        windowClosed = remaining <= 0;
+        if (!windowClosed) {
+          await sleep(Math.max(100, Math.min(1_000, remaining)));
+        } else if (!modelVotesDone) {
+          await sleep(300);
+        }
+      }
+
+      const now = Date.now();
+      if (now - lastLeaseRenewAt >= 20_000) {
+        await ctx.runMutation(convexInternal.engine.renewLease, { leaseId: args.leaseId });
+        lastLeaseRenewAt = now;
+      }
+    }
+
+    await modelVotesPromise;
 
     if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
 

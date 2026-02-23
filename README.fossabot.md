@@ -65,3 +65,4 @@ O backend já diferencia usuários por plataforma no identificador (`twitch:<id>
 
 - O site não envia mais voto por clique.
 - A contagem da plateia no frontend e broadcast passa a refletir apenas votos recebidos via Fossabot.
+- A janela de voto humano é dinâmica: 120s sem audiência real, 30s com audiência real.

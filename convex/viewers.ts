@@ -3,6 +3,7 @@ import { internalMutation, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
+  VIEWER_VOTE_WINDOW_ACTIVE_MS,
   VIEWER_REAPER_BATCH,
   VIEWER_REAPER_INTERVAL_MS,
   VIEWER_SESSION_TTL_MS,
@@ -10,6 +11,7 @@ import {
   hashToShard,
 } from "./constants";
 import { getOrCreateEngineState } from "./state";
+import { readTotalViewerCount } from "./viewerCount";
 
 async function adjustCountShard(ctx: any, shard: number, delta: number) {
   const row = await ctx.db
@@ -78,6 +80,7 @@ export const heartbeat = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const shard = hashToShard(args.viewerId, VIEWER_SHARD_COUNT);
+    let increasedCount = false;
 
     const existing = await ctx.db
       .query("viewerPresence")
@@ -96,6 +99,7 @@ export const heartbeat = mutation({
         updatedAt: now,
       });
       await adjustCountShard(ctx, shard, 1);
+      increasedCount = true;
     } else {
       const wasExpired = existing.expiresAt <= now;
       await ctx.db.patch(existing._id, {
@@ -106,6 +110,7 @@ export const heartbeat = mutation({
       });
       if (wasExpired) {
         await adjustCountShard(ctx, existing.countShard, 1);
+        increasedCount = true;
       }
     }
 
@@ -117,6 +122,23 @@ export const heartbeat = mutation({
       await ctx.db.patch(engine._id, {
         reaperScheduledAt: now + VIEWER_REAPER_INTERVAL_MS,
       });
+    }
+
+    if (increasedCount && engine.activeRoundId) {
+      const activeRound = await ctx.db.get(engine.activeRoundId);
+      if (activeRound && activeRound.phase === "voting" && activeRound.viewerVotingEndsAt) {
+        const shortenNow = Date.now();
+        const remaining = activeRound.viewerVotingEndsAt - shortenNow;
+        if (remaining > VIEWER_VOTE_WINDOW_ACTIVE_MS) {
+          const totalViewerCount = await readTotalViewerCount(ctx as any);
+          if (totalViewerCount > 0) {
+            await ctx.db.patch(activeRound._id, {
+              viewerVotingEndsAt: shortenNow + VIEWER_VOTE_WINDOW_ACTIVE_MS,
+              updatedAt: shortenNow,
+            });
+          }
+        }
+      }
     }
 
     return null;

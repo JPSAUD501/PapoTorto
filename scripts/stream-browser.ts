@@ -1,4 +1,7 @@
 import puppeteer from "puppeteer";
+import { readdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 type Mode = "live" | "dryrun";
 
@@ -7,14 +10,21 @@ type SinkWriter = {
   end(error?: Error): number;
 };
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
+const STREAM_FPS = 30;
+const CAPTURE_BITRATE = 12_000_000;
+const TARGET_WIDTH = "1920";
+const TARGET_HEIGHT = "1080";
+const VIDEO_BITRATE = "6000k";
+const MAXRATE = "6000k";
+const BUFSIZE = "12000k";
+const GOP = "60";
+const AUDIO_BITRATE = "160k";
+const PLAYLIST_TRACKS = 20_000;
 
 function usage(): never {
   console.error("Usage: bun scripts/stream-browser.ts <live|dryrun>");
   console.error("Required for live mode: STREAM_RTMP_TARGET");
+  console.error("Required for audio: music/bg_1.mp3, music/bg_2.mp3, ...");
   process.exit(1);
 }
 
@@ -25,21 +35,9 @@ function resolveMode(value: string | undefined): Mode {
 
 const mode = resolveMode(process.argv[2]);
 
-const streamFps = parsePositiveInt(process.env.STREAM_FPS, 30);
-const captureBitrate = parsePositiveInt(process.env.STREAM_CAPTURE_BITRATE, 12_000_000);
-const targetSize = process.env.STREAM_TARGET_SIZE ?? "1920x1080";
-const targetParts = targetSize.split("x");
-const targetWidth = targetParts[0] ?? "1920";
-const targetHeight = targetParts[1] ?? "1080";
-const videoBitrate = process.env.STREAM_VIDEO_BITRATE ?? "6000k";
-const maxrate = process.env.STREAM_MAXRATE ?? "6000k";
-const bufsize = process.env.STREAM_BUFSIZE ?? "12000k";
-const gop = String(parsePositiveInt(process.env.STREAM_GOP, 60));
-const audioBitrate = process.env.STREAM_AUDIO_BITRATE ?? "160k";
 const streamRtmpTarget = process.env.STREAM_RTMP_TARGET?.trim() ?? "";
 const streamOutputTarget = streamRtmpTarget;
-const serverPort = process.env.STREAM_APP_PORT ?? "5109";
-const broadcastUrl = process.env.BROADCAST_URL ?? `http://127.0.0.1:${serverPort}/broadcast.html`;
+const broadcastUrl = process.env.BROADCAST_URL?.trim() || "http://127.0.0.1:5109/broadcast.html";
 const redactionTokens = [
   broadcastUrl,
   streamRtmpTarget,
@@ -58,6 +56,70 @@ function redactSensitive(value: string): string {
 if (mode === "live" && !streamOutputTarget) {
   console.error("STREAM_RTMP_TARGET is not set.");
   process.exit(1);
+}
+
+function resolveMusicDir(): string {
+  return path.resolve(process.cwd(), "music");
+}
+
+function compareTrackNames(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function pickRandomTrack(tracks: string[], previous: string | null): string {
+  if (tracks.length === 1) return tracks[0]!;
+  let picked = tracks[Math.floor(Math.random() * tracks.length)]!;
+  while (picked === previous) {
+    picked = tracks[Math.floor(Math.random() * tracks.length)]!;
+  }
+  return picked;
+}
+
+function buildRandomTrackSequence(tracks: string[], size: number): string[] {
+  const sequence: string[] = [];
+  let previous: string | null = null;
+  for (let i = 0; i < size; i++) {
+    const next = pickRandomTrack(tracks, previous);
+    sequence.push(next);
+    previous = next;
+  }
+  return sequence;
+}
+
+function escapeForConcatFile(filePath: string): string {
+  return filePath.replace(/'/g, "'\\''");
+}
+
+async function getBackgroundTracks(): Promise<string[]> {
+  const musicDir = resolveMusicDir();
+  let names: string[];
+  try {
+    names = await readdir(musicDir);
+  } catch {
+    throw new Error(`Music directory not found: ${musicDir}`);
+  }
+
+  const tracks = names
+    .filter((name) => /^bg_\d+\.mp3$/i.test(name))
+    .sort(compareTrackNames)
+    .map((name) => path.join(musicDir, name));
+
+  if (tracks.length === 0) {
+    throw new Error(`No tracks found in ${musicDir}. Add files like bg_1.mp3, bg_2.mp3...`);
+  }
+
+  return tracks;
+}
+
+async function writePlaylistFile(tracks: string[]): Promise<string> {
+  const sequence = buildRandomTrackSequence(tracks, PLAYLIST_TRACKS);
+  const filePath = path.join(
+    tmpdir(),
+    `papotorto-bg-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+  );
+  const body = sequence.map((track) => `file '${escapeForConcatFile(track)}'`).join("\n") + "\n";
+  await writeFile(filePath, body, "utf8");
+  return filePath;
 }
 
 async function assertBroadcastReachable(url: string) {
@@ -79,7 +141,7 @@ async function assertBroadcastReachable(url: string) {
   }
 }
 
-function buildFfmpegArgs(currentMode: Mode): string[] {
+function buildFfmpegArgs(currentMode: Mode, playlistPath: string): string[] {
   const args = [
     "-hide_banner",
     "-loglevel",
@@ -90,16 +152,20 @@ function buildFfmpegArgs(currentMode: Mode): string[] {
     "webm",
     "-i",
     "pipe:0",
+    "-stream_loop",
+    "-1",
     "-f",
-    "lavfi",
+    "concat",
+    "-safe",
+    "0",
     "-i",
-    "anullsrc=channel_layout=stereo:sample_rate=44100",
+    playlistPath,
     "-map",
     "0:v:0",
     "-map",
     "1:a:0",
     "-vf",
-    `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2`,
+    `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
     "-c:v",
     "libx264",
     "-preset",
@@ -109,21 +175,21 @@ function buildFfmpegArgs(currentMode: Mode): string[] {
     "-pix_fmt",
     "yuv420p",
     "-b:v",
-    videoBitrate,
+    VIDEO_BITRATE,
     "-maxrate",
-    maxrate,
+    MAXRATE,
     "-bufsize",
-    bufsize,
+    BUFSIZE,
     "-g",
-    gop,
+    GOP,
     "-keyint_min",
-    gop,
+    GOP,
     "-sc_threshold",
     "0",
     "-c:a",
     "aac",
     "-b:a",
-    audioBitrate,
+    AUDIO_BITRATE,
     "-ar",
     "44100",
     "-ac",
@@ -187,8 +253,10 @@ async function pipeReadableToRedactedStderr(readable: ReadableStream<Uint8Array>
 
 async function main() {
   await assertBroadcastReachable(broadcastUrl);
+  const tracks = await getBackgroundTracks();
+  const playlistPath = await writePlaylistFile(tracks);
 
-  const ffmpegArgs = buildFfmpegArgs(mode);
+  const ffmpegArgs = buildFfmpegArgs(mode, playlistPath);
   const ffmpeg = Bun.spawn(["ffmpeg", ...ffmpegArgs], {
     stdin: "pipe",
     stdout: mode === "dryrun" ? "pipe" : "inherit",
@@ -281,16 +349,12 @@ async function main() {
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-  page.on("console", (msg) => {
-    if (process.env.STREAM_DEBUG === "1") {
-      console.log(`[broadcast] ${msg.type()}: ${redactSensitive(msg.text())}`);
-    }
-  });
 
   const captureUrl = new URL(broadcastUrl);
+  captureUrl.searchParams.set("ghost", "true");
   captureUrl.searchParams.set("sink", `http://127.0.0.1:${chunkServer.port}/chunks`);
-  captureUrl.searchParams.set("captureFps", String(streamFps));
-  captureUrl.searchParams.set("captureBitrate", String(captureBitrate));
+  captureUrl.searchParams.set("captureFps", String(STREAM_FPS));
+  captureUrl.searchParams.set("captureBitrate", String(CAPTURE_BITRATE));
 
   await page.goto(captureUrl.toString(), { waitUntil: "networkidle2" });
   await page.waitForSelector("#broadcast-canvas", { timeout: 10_000 });
@@ -331,6 +395,9 @@ async function main() {
         ffplay.kill();
       } catch {}
     }
+    try {
+      await unlink(playlistPath);
+    } catch {}
   };
 
   const ffmpegExit = ffmpeg.exited.then((code) => {

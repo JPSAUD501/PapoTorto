@@ -108,6 +108,11 @@ function getOrCreateViewerId(): string {
   return generated;
 }
 
+function isGhostViewer(): boolean {
+  const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 type RankingEntry = {
   name: string;
   score: number;
@@ -611,6 +616,7 @@ function ConnectingScreen() {
 function App() {
   const [viewerVotingSecondsLeft, setViewerVotingSecondsLeft] = useState(0);
   const viewerIdRef = React.useRef<string | null>(null);
+  const ghostViewer = React.useMemo(() => isGhostViewer(), []);
 
   const liveState = useQuery(convexApi.live.getState, {}) as
     | { data: GameState; totalRounds: number | null; viewerCount: number }
@@ -643,6 +649,11 @@ function App() {
     const viewerId = getOrCreateViewerId();
     viewerIdRef.current = viewerId;
     void ensureStarted({});
+
+    if (ghostViewer) {
+      return;
+    }
+
     void heartbeat({ viewerId, page: "live" });
     const interval = setInterval(() => {
       void heartbeat({ viewerId, page: "live" });
@@ -650,7 +661,7 @@ function App() {
     return () => {
       clearInterval(interval);
     };
-  }, [ensureStarted, heartbeat]);
+  }, [ensureStarted, heartbeat, ghostViewer]);
 
   if (!liveState || !state) return <ConnectingScreen />;
 

@@ -2,13 +2,15 @@ import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { RUNNER_LEASE_MS } from "./constants";
+import { PLATFORM_VIEWER_POLL_INTERVAL_MS, RUNNER_LEASE_MS } from "./constants";
 import { toClientRound } from "./rounds";
 import { getEngineState, getOrCreateEngineState, normalizeScoreRecord } from "./state";
+import { readTotalViewerCount } from "./viewerCount";
 
-async function readViewerCount(ctx: any): Promise<number> {
-  const rows = await ctx.db.query("viewerCountShards").collect();
-  return rows.reduce((sum: number, row: any) => sum + row.count, 0);
+function getPollIntervalMs(): number {
+  const raw = Number.parseInt(process.env.PLATFORM_VIEWER_POLL_INTERVAL_MS ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return PLATFORM_VIEWER_POLL_INTERVAL_MS;
+  return raw;
 }
 
 export const getState = query({
@@ -84,7 +86,7 @@ export const getState = query({
         generation: state.generation,
       },
       totalRounds: state.runsMode === "finite" ? (state.totalRounds ?? null) : null,
-      viewerCount: await readViewerCount(ctx),
+      viewerCount: await readTotalViewerCount(ctx),
     };
   },
 });
@@ -109,6 +111,16 @@ async function ensureStartedImpl(ctx: any) {
       updatedAt: now,
     });
     await ctx.scheduler.runAfter(0, convexInternal.engine.runLoop, { leaseId });
+  }
+
+  const latestState = await getOrCreateEngineState(ctx as any);
+  if (!latestState.platformPollScheduledAt || latestState.platformPollScheduledAt <= now) {
+    const interval = getPollIntervalMs();
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
+    await ctx.db.patch(latestState._id, {
+      platformPollScheduledAt: now + interval,
+      updatedAt: now,
+    });
   }
 }
 

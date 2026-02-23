@@ -228,6 +228,113 @@ body {
   gap: 12px;
 }
 
+.targets {
+  margin-top: 28px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.targets h2 {
+  font-family: var(--serif);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.targets__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.targets__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.targets__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.targets__form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.targets__list {
+  display: grid;
+  gap: 10px;
+}
+
+.targets__empty {
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  padding: 12px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-size: 12px;
+}
+
+.target-row {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.target-row__main {
+  min-width: 0;
+}
+
+.target-row__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+}
+
+.target-row__platform {
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+}
+
+.target-row__meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.target-row__error {
+  color: var(--danger);
+}
+
+.target-row__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .error-banner {
   border: 1px solid var(--danger);
   background: rgba(239, 68, 68, 0.1);
@@ -313,6 +420,20 @@ body {
   .status-grid,
   .actions {
     grid-template-columns: 1fr;
+  }
+
+  .targets__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .targets__form {
+    grid-template-columns: 1fr;
+  }
+
+  .target-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .admin-header {

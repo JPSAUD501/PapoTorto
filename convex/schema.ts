@@ -41,6 +41,7 @@ export default defineSchema({
     runnerLeaseId: v.optional(v.string()),
     runnerLeaseUntil: v.optional(v.number()),
     reaperScheduledAt: v.optional(v.number()),
+    platformPollScheduledAt: v.optional(v.number()),
   }).index("by_key", ["key"]),
 
   rounds: defineTable({
@@ -112,4 +113,19 @@ export default defineSchema({
     count: v.number(),
     updatedAt: v.number(),
   }).index("by_shard", ["shard"]),
+
+  viewerTargets: defineTable({
+    platform: v.union(v.literal("twitch"), v.literal("youtube")),
+    target: v.string(),
+    enabled: v.boolean(),
+    viewerCount: v.number(),
+    isLive: v.boolean(),
+    lastPolledAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    updatedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_enabled", ["enabled"])
+    .index("by_platform_and_target", ["platform", "target"])
+    .index("by_platform", ["platform"]),
 });

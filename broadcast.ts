@@ -142,6 +142,11 @@ function getOrCreateViewerId(): string {
   return generated;
 }
 
+function isGhostViewer(): boolean {
+  const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 type RankingEntry = {
   name: string;
   score: number;
@@ -182,14 +187,22 @@ function rankByScore(
 }
 
 function setupRealtime() {
+  const ghostViewer = isGhostViewer();
   const viewerId = getOrCreateViewerId();
   void convex.mutation(convexApi.live.ensureStarted, {});
-  void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
+
+  if (!ghostViewer) {
+    void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
+  }
 
   if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
-  heartbeatTimer = window.setInterval(() => {
-    void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
-  }, 10_000);
+  if (!ghostViewer) {
+    heartbeatTimer = window.setInterval(() => {
+      void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
+    }, 10_000);
+  } else {
+    heartbeatTimer = null;
+  }
 
   liveUnsubscribe?.unsubscribe();
   liveUnsubscribe = convex.onUpdate(

@@ -4,9 +4,11 @@ export const VIEWER_SHARD_COUNT = 64;
 export const VIEWER_SESSION_TTL_MS = 30_000;
 export const VIEWER_REAPER_INTERVAL_MS = 5_000;
 export const VIEWER_REAPER_BATCH = 500;
-export const VIEWER_VOTE_WINDOW_MS = 30_000;
+export const VIEWER_VOTE_WINDOW_ACTIVE_MS = 30_000;
+export const VIEWER_VOTE_WINDOW_IDLE_MS = 120_000;
 export const POST_ROUND_DELAY_MS = 5_000;
 export const RUNNER_LEASE_MS = 60_000;
+export const PLATFORM_VIEWER_POLL_INTERVAL_MS = 10_000;
 
 export const DEFAULT_SCORES = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
 

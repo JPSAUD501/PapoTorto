@@ -1,97 +1,173 @@
-﻿# PapoTorto (Convex-Only)
+# PapoTorto (Convex-Only)
 
-Backend, banco e realtime rodam no Convex. Sem backend Bun de API, sem SQLite/Postgres e sem transporte socket manual.
+PapoTorto e um jogo de batalha de respostas entre modelos de IA com voto humano via chat.
+Todo o backend, banco e realtime rodam no Convex.
+
+Sem SQLite, sem Postgres, sem WebSocket manual e sem Railway.
+
+## Arquitetura
+
+- `web`: app Vite (live, history, admin, broadcast canvas)
+- `convex`: engine do jogo, storage, realtime, HTTP actions admin e voto Fossabot
+- `stream-worker`: abre `/broadcast.html?ghost=true`, captura canvas e envia RTMP
 
 ## Requisitos
 
 - Bun 1.3+
 - Projeto Convex configurado
-- OPENROUTER_API_KEY
-- VITE_CONVEX_URL
-- ADMIN_PASSCODE
+- ffmpeg (para `stream-worker`)
+- chromium (para `stream-worker`)
 
-## Setup inicial
+## Variaveis de ambiente
+
+Todas as envs configuraveis do projeto estao em `.env.example`.
+
+### Web client
+
+- `VITE_CONVEX_URL` (obrigatoria)
+
+### Convex backend
+
+- `OPENROUTER_API_KEY` (obrigatoria para o engine gerar prompt/resposta/voto IA)
+- `ADMIN_PASSCODE` (obrigatoria para `/admin/*`)
+- `ALLOWED_ORIGINS` (opcional, default `*`)
+- `FOSSABOT_VALIDATE_REQUESTS` (opcional, default `true`)
+
+### Integracoes de audiencia real
+
+- `TWITCH_CLIENT_ID` (obrigatoria se usar targets Twitch)
+- `TWITCH_CLIENT_SECRET` (obrigatoria se usar targets Twitch)
+- `YOUTUBE_API_KEY` (obrigatoria se usar targets YouTube)
+- `PLATFORM_VIEWER_POLL_INTERVAL_MS` (opcional, default `10000`)
+
+### Stream worker
+
+- `STREAM_RTMP_TARGET` (obrigatoria em modo live)
+- `BROADCAST_URL` (recomendado; no Coolify: `http://web:5109/broadcast.html`)
+
+## Setup local
+
+1. Instalar dependencias:
 
 ```bash
 bun install
-bun run dev:convex
 ```
 
-Se for o primeiro setup do projeto Convex local, o comando acima orienta a vinculacao do deployment.
+2. Configurar envs (copie de `.env.example`).
 
-## Desenvolvimento
-
-Terminal 1:
+3. Rodar Convex:
 
 ```bash
 bun run dev:convex
 ```
 
-Terminal 2:
+4. Rodar web:
 
 ```bash
 bun run dev:web
 ```
 
-Paginas:
+## Paginas
 
-- /index.html (live)
-- /history.html
-- /admin.html
-- /broadcast.html
+- `/index.html` live
+- `/history.html` historico
+- `/admin.html` admin
+- `/broadcast.html` canvas para stream
 
 ## Admin HTTP Actions (Convex)
 
-- POST /admin/login
-- GET /admin/status
-- POST /admin/pause
-- POST /admin/resume
-- POST /admin/reset
-- GET /admin/export
+- `POST /admin/login`
+- `GET /admin/status`
+- `GET /admin/viewer-targets`
+- `POST /admin/viewer-targets`
+- `POST /admin/viewer-targets/delete`
+- `POST /admin/pause`
+- `POST /admin/resume`
+- `POST /admin/reset`
+- `GET /admin/export`
 
-Autorizacao: header x-admin-passcode com ADMIN_PASSCODE.
+Auth: header `x-admin-passcode`.
 
-## Votacao via chat (Fossabot)
+## Votacao da plateia (Fossabot)
 
-A votacao da plateia e feita via chat (Twitch/YouTube) com Fossabot.
+Votos humanos entram por:
 
-Guia completo:
+- `GET /fossabot/vote?vote=1`
+- `GET /fossabot/vote?vote=2`
 
-- `README.fossabot.md`
+Regra: 1 voto por usuario por rodada, com troca permitida.
 
-## Build web
+Guia completo: `README.fossabot.md`
+
+## Contagem de espectadores e janela de voto
+
+Contagem exibida:
+
+- `web nao-ghost + soma de todos os targets ativos Twitch/YouTube`
+
+Regra da janela humana:
+
+- sem audiencia real: 120s
+- com audiencia real: 30s
+- se entrar audiencia durante janela longa, encurta imediatamente para 30s
+- se restar menos de 30s, mantem o tempo restante
+
+### `ghost=true`
+
+Paginas com `?ghost=true` nao fazem heartbeat de presenca.
+Isso impede contaminar a contagem web quando o stream worker abre o broadcast.
+
+## Stream worker
+
+Live:
+
+```bash
+bun run start:stream
+```
+
+Dry run local:
+
+```bash
+bun run start:stream:dryrun
+```
+
+### Musica de fundo
+
+Coloque faixas em `music/` com nome:
+
+- `bg_1.mp3`
+- `bg_2.mp3`
+- `bg_3.mp3`
+- `bg_4.mp3`
+
+Suporta mais faixas (`bg_5.mp3`, etc). O worker monta playlist aleatoria e toca em loop continuo.
+
+## Build
 
 ```bash
 bun run build:web
 bun run preview:web
 ```
 
-## Stream worker
+## Deploy (Coolify, 2 servicos)
 
-```bash
-bun run start:stream
-```
+1. `web`
+- Dockerfile: `Dockerfile`
+- Porta: `5109`
+- Env minima: `VITE_CONVEX_URL`
 
-Dry-run local:
-
-```bash
-bun run start:stream:dryrun
-```
-
-Capture sink: envio por HTTP POST /chunks.
-
-Configuracao de destino RTMP (qualquer plataforma):
-
-- `STREAM_RTMP_TARGET` (URL completa com stream key)
-
-## Coolify (2 servicos)
-
-1. web
-- Dockerfile: Dockerfile
-- Porta: 5109
-- Variaveis: VITE_CONVEX_URL
-
-2. stream-worker
-- Dockerfile: Dockerfile.stream
+2. `stream-worker`
+- Dockerfile: `Dockerfile.stream`
 - Sem porta publica obrigatoria
-- Variaveis: `BROADCAST_URL`, `STREAM_RTMP_TARGET`, `STREAM_APP_PORT`, `STREAM_*` opcionais
+- Env minima: `BROADCAST_URL`, `STREAM_RTMP_TARGET`
+- Montar pasta `music/` com as faixas `bg_*.mp3`
+
+## Scripts disponiveis
+
+- `bun run dev:convex`
+- `bun run dev:web`
+- `bun run build:web`
+- `bun run preview:web`
+- `bun run start` (preview web)
+- `bun run start:stream`
+- `bun run start:stream:dryrun`

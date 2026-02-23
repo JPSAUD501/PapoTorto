@@ -122,6 +122,97 @@ http.route({
 });
 
 http.route({
+  path: "/admin/viewer-targets",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    const targets = await ctx.runQuery(convexInternal.admin.listViewerTargets, {});
+    return json(request, { ok: true, targets });
+  }),
+});
+
+http.route({
+  path: "/admin/viewer-targets",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as {
+      id?: string;
+      platform?: "twitch" | "youtube";
+      target?: string;
+      enabled?: boolean;
+    };
+
+    if (payload.platform !== "twitch" && payload.platform !== "youtube") {
+      return text(request, "Invalid platform", 400);
+    }
+
+    if (typeof payload.target !== "string" || !payload.target.trim()) {
+      return text(request, "Invalid target", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.admin.upsertViewerTarget, {
+        id: payload.id,
+        platform: payload.platform,
+        target: payload.target,
+        enabled: payload.enabled !== false,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to save target", 400);
+    }
+
+    const targets = await ctx.runQuery(convexInternal.admin.listViewerTargets, {});
+    return json(request, { ok: true, targets });
+  }),
+});
+
+http.route({
+  path: "/admin/viewer-targets/delete",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as { id?: string };
+    if (typeof payload.id !== "string" || !payload.id) {
+      return text(request, "Invalid id", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.admin.deleteViewerTarget, {
+        id: payload.id,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to delete target", 400);
+    }
+
+    const targets = await ctx.runQuery(convexInternal.admin.listViewerTargets, {});
+    return json(request, { ok: true, targets });
+  }),
+});
+
+http.route({
   path: "/admin/status",
   method: "GET",
   handler: withOptions(async (ctx, request) => {

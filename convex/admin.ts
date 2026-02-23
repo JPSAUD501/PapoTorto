@@ -2,13 +2,28 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { DEFAULT_SCORES } from "./constants";
+import { DEFAULT_SCORES, PLATFORM_VIEWER_POLL_INTERVAL_MS } from "./constants";
 import { getEngineState, getOrCreateEngineState, normalizeScoreRecord } from "./state";
 import { toClientRound } from "./rounds";
+import { readTotalViewerCount } from "./viewerCount";
 
-async function readViewerCount(ctx: any): Promise<number> {
-  const rows = await ctx.db.query("viewerCountShards").collect();
-  return rows.reduce((sum: number, row: any) => sum + row.count, 0);
+function normalizeViewerTarget(platform: "twitch" | "youtube", target: string): string {
+  const trimmed = target.trim();
+  return platform === "twitch" ? trimmed.toLowerCase() : trimmed;
+}
+
+function isValidTwitchTarget(target: string): boolean {
+  return /^[a-z0-9_]{3,25}$/i.test(target);
+}
+
+function isValidYouTubeTarget(target: string): boolean {
+  return /^[A-Za-z0-9_-]{11}$/.test(target);
+}
+
+function getViewerPollIntervalMs(): number {
+  const raw = Number.parseInt(process.env.PLATFORM_VIEWER_POLL_INTERVAL_MS ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return PLATFORM_VIEWER_POLL_INTERVAL_MS;
+  return raw;
 }
 
 export const getSnapshot = internalQuery({
@@ -47,8 +62,98 @@ export const getSnapshot = internalQuery({
       done: state.done,
       completedInMemory: state.completedRounds,
       persistedRounds: doneRounds.length,
-      viewerCount: await readViewerCount(ctx),
+      viewerCount: await readTotalViewerCount(ctx),
     };
+  },
+});
+
+export const listViewerTargets = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("viewerTargets").collect();
+    return rows.sort((a: any, b: any) => a.platform.localeCompare(b.platform) || a.target.localeCompare(b.target));
+  },
+});
+
+export const upsertViewerTarget = internalMutation({
+  args: {
+    id: v.optional(v.id("viewerTargets")),
+    platform: v.union(v.literal("twitch"), v.literal("youtube")),
+    target: v.string(),
+    enabled: v.boolean(),
+  },
+  returns: v.id("viewerTargets"),
+  handler: async (ctx, args) => {
+    const target = normalizeViewerTarget(args.platform, args.target);
+    if (!target) throw new Error("Target vazio");
+
+    if (args.platform === "twitch" && !isValidTwitchTarget(target)) {
+      throw new Error("Target Twitch invalido. Use user_login (3-25, letras/numeros/_).");
+    }
+    if (args.platform === "youtube" && !isValidYouTubeTarget(target)) {
+      throw new Error("Target YouTube invalido. Use videoId com 11 caracteres.");
+    }
+
+    const duplicate = await ctx.db
+      .query("viewerTargets")
+      .withIndex("by_platform_and_target", (q: any) => q.eq("platform", args.platform).eq("target", target))
+      .first();
+
+    if (duplicate && duplicate._id !== args.id) {
+      throw new Error("Target ja cadastrado para esta plataforma.");
+    }
+
+    const now = Date.now();
+    let id = args.id;
+    if (id) {
+      const existing = await ctx.db.get(id);
+      if (!existing) throw new Error("Target nao encontrado.");
+      const changed = existing.platform !== args.platform || existing.target !== target;
+      await ctx.db.patch(id, {
+        platform: args.platform,
+        target,
+        enabled: args.enabled,
+        viewerCount: changed ? 0 : existing.viewerCount,
+        isLive: changed ? false : existing.isLive,
+        lastError: undefined,
+        updatedAt: now,
+      });
+    } else {
+      id = await ctx.db.insert("viewerTargets", {
+        platform: args.platform,
+        target,
+        enabled: args.enabled,
+        viewerCount: 0,
+        isLive: false,
+        updatedAt: now,
+        createdAt: now,
+      });
+    }
+
+    const state = await getOrCreateEngineState(ctx as any);
+    const interval = getViewerPollIntervalMs();
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
+    await ctx.db.patch(state._id, {
+      platformPollScheduledAt: now + interval,
+      updatedAt: now,
+    });
+
+    return id!;
+  },
+});
+
+export const deleteViewerTarget = internalMutation({
+  args: {
+    id: v.id("viewerTargets"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.id);
+    if (row) {
+      await ctx.db.delete(args.id);
+    }
+    return null;
   },
 });
 
@@ -114,7 +219,16 @@ export const reset = internalMutation({
       runnerLeaseId: undefined,
       runnerLeaseUntil: undefined,
       reaperScheduledAt: undefined,
+      platformPollScheduledAt: undefined,
       updatedAt: Date.now(),
+    });
+
+    const pollInterval = getViewerPollIntervalMs();
+    const pollNow = Date.now();
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
+    await ctx.db.patch(state._id, {
+      platformPollScheduledAt: pollNow + pollInterval,
+      updatedAt: pollNow,
     });
 
     const presences = await ctx.db.query("viewerPresence").collect();
@@ -177,6 +291,7 @@ export const getExportData = internalQuery({
       return {
         exportedAt: new Date().toISOString(),
         state: null,
+        viewerTargets: await ctx.db.query("viewerTargets").collect(),
         rounds: [],
       };
     }
@@ -189,6 +304,7 @@ export const getExportData = internalQuery({
     return {
       exportedAt: new Date().toISOString(),
       state,
+      viewerTargets: await ctx.db.query("viewerTargets").collect(),
       rounds: rounds.map((round: any) => toClientRound(round)).filter(Boolean),
     };
   },

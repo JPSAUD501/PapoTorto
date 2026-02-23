@@ -85,6 +85,11 @@ function getOrCreateViewerId(): string {
   return generated;
 }
 
+function isGhostViewer(): boolean {
+  const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 const convex = new ConvexReactClient(getConvexUrl());
 const convexApi = api as any;
 
@@ -295,16 +300,22 @@ function App() {
 
   const ensureStarted = useMutation(convexApi.live.ensureStarted);
   const heartbeat = useMutation(convexApi.viewers.heartbeat);
+  const ghostViewer = React.useMemo(() => isGhostViewer(), []);
 
   React.useEffect(() => {
     const viewerId = getOrCreateViewerId();
     void ensureStarted({});
+
+    if (ghostViewer) {
+      return;
+    }
+
     void heartbeat({ viewerId, page: "live" });
     const interval = setInterval(() => {
       void heartbeat({ viewerId, page: "live" });
     }, 10_000);
     return () => clearInterval(interval);
-  }, [ensureStarted, heartbeat]);
+  }, [ensureStarted, heartbeat, ghostViewer]);
 
   return (
     <div className="app">
