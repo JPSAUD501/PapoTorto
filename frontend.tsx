@@ -3,12 +3,16 @@ import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
-import { MODELS } from "./shared/models";
+import {
+  getLogoUrlById,
+  normalizeHexColor,
+  type ModelCatalogEntry,
+} from "./shared/models";
 import "./frontend.css";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-type Model = { id: string; name: string };
+type Model = { id: string; name: string; color?: string; logoId?: string };
 type TaskInfo = {
   model: Model;
   startedAt: number;
@@ -48,6 +52,7 @@ type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  models: ModelCatalogEntry[];
   enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
@@ -70,34 +75,24 @@ type ServerMessage = StateMessage | ViewerCountMessage | VotedAckMessage;
 
 // â”€â”€ Model colors & logos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3 Flash": "#4285F4",
-  "Kimi K2": "#00E599",
-  "DeepSeek 3.2": "#4D6BFE",
-  "Qwen 3.5 Plus": "#E67E22",
-  "GLM-5": "#1F63EC",
-  "GPT-5.2": "#10A37F",
-  "Sonnet 4.6": "#D97757",
-  "Grok 4.1": "#FFFFFF",
-  "MiniMax 2.5": "#FF3B30",
-};
+const DEFAULT_UI_COLOR = "#A1A1A1";
 
-function getColor(name: string): string {
-  return MODEL_COLORS[name] ?? "#A1A1A1";
+let modelCatalogByName = new Map<string, ModelCatalogEntry>();
+
+function syncModelCatalog(models: ModelCatalogEntry[]) {
+  modelCatalogByName = new Map(models.map((model) => [model.name, model]));
 }
 
-function getLogo(name: string): string | null {
-  if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
-  if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
-  if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
-  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
-  if (name.includes("GLM")) return "/assets/logos/glm.svg";
-  if (name.includes("GPT")) return "/assets/logos/openai.svg";
-  if (name.includes("Opus") || name.includes("Sonnet"))
-    return "/assets/logos/claude.svg";
-  if (name.includes("Grok")) return "/assets/logos/grok.svg";
-  if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
-  return null;
+function getColor(name: string, fallbackColor?: string): string {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return normalizeHexColor(fromCatalog.color);
+  return normalizeHexColor(fallbackColor) || DEFAULT_UI_COLOR;
+}
+
+function getLogo(name: string, fallbackLogoId?: string): string | null {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return getLogoUrlById(fromCatalog.logoId);
+  return getLogoUrlById(fallbackLogoId);
 }
 
 function getConvexUrl(): string {
@@ -116,15 +111,10 @@ function getOrCreateViewerId(): string {
   return generated;
 }
 
-const MODEL_NAME_BY_ID = new Map<string, string>(
-  MODELS.map((model) => [model.id, model.name]),
-);
-
-function getEnabledModelNames(enabledModelIds: string[]): string[] {
-  const names = enabledModelIds
-    .map((id) => MODEL_NAME_BY_ID.get(id))
-    .filter((name): name is string => Boolean(name));
-  return names.length > 0 ? names : MODELS.map((model) => model.name);
+function getEnabledModelNames(models: ModelCatalogEntry[]): string[] {
+  return models
+    .filter((model) => model.enabled && !model.archivedAt)
+    .map((model) => model.name);
 }
 
 function isGhostViewer(): boolean {
@@ -221,8 +211,8 @@ function Dots() {
 }
 
 function ModelTag({ model, small }: { model: Model; small?: boolean }) {
-  const logo = getLogo(model.name);
-  const color = getColor(model.name);
+  const logo = getLogo(model.name, model.logoId);
+  const color = getColor(model.name, model.color);
   return (
     <span
       className={`model-tag ${small ? "model-tag--sm" : ""}`}
@@ -298,7 +288,7 @@ function ContestantCard({
   onVote?: () => void;
   isMyVote?: boolean;
 }) {
-  const color = getColor(task.model.name);
+  const color = getColor(task.model.name, task.model.color);
   const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
   const showViewerVotes = showVotes && totalViewerVotes !== undefined && totalViewerVotes > 0;
   const viewerPct = showViewerVotes && totalViewerVotes > 0
@@ -349,7 +339,7 @@ function ContestantCard({
             </span>
             <span className="vote-meta__dots">
               {voters.map((v, i) => {
-                const logo = getLogo(v.voter.name);
+                const logo = getLogo(v.voter.name, v.voter.logoId);
                 return logo ? (
                   <img
                     key={i}
@@ -362,7 +352,7 @@ function ContestantCard({
                   <span
                     key={i}
                     className="voter-dot voter-dot--letter"
-                    style={{ color: getColor(v.voter.name) }}
+                    style={{ color: getColor(v.voter.name, v.voter.color) }}
                     title={v.voter.name}
                   >
                     {v.voter.name[0]}
@@ -710,9 +700,14 @@ function App() {
   const totalRounds = liveState?.totalRounds ?? null;
   const viewerCount = liveState?.viewerCount ?? 0;
   const completedRounds = state?.completedRounds ?? 0;
+  const catalogModels = state?.models ?? [];
+  useEffect(() => {
+    syncModelCatalog(catalogModels);
+  }, [catalogModels]);
+
   const enabledModelNames = React.useMemo(
-    () => getEnabledModelNames(state?.enabledModelIds ?? []),
-    [state?.enabledModelIds],
+    () => getEnabledModelNames(catalogModels),
+    [catalogModels],
   );
 
   useEffect(() => {

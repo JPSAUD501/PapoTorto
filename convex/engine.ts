@@ -131,8 +131,20 @@ export const renewLease = internalMutation({
 export const createRound = internalMutation({
   args: {
     expectedGeneration: v.number(),
-    prompter: v.object({ id: v.string(), name: v.string() }),
-    contestants: v.array(v.object({ id: v.string(), name: v.string() })),
+    prompter: v.object({
+      id: v.string(),
+      name: v.string(),
+      color: v.optional(v.string()),
+      logoId: v.optional(v.string()),
+    }),
+    contestants: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        color: v.optional(v.string()),
+        logoId: v.optional(v.string()),
+      }),
+    ),
   },
   returns: v.union(v.object({ roundId: v.id("rounds"), num: v.number() }), v.null()),
   handler: async (ctx, args) => {
@@ -348,7 +360,14 @@ export const startVoting = internalMutation({
   args: {
     expectedGeneration: v.number(),
     roundId: v.id("rounds"),
-    voters: v.array(v.object({ id: v.string(), name: v.string() })),
+    voters: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        color: v.optional(v.string()),
+        logoId: v.optional(v.string()),
+      }),
+    ),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {

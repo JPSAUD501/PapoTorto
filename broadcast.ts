@@ -1,9 +1,13 @@
 import { ConvexClient } from "convex/browser";
 import { api } from "./convex/_generated/api";
 import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
-import { MODELS } from "./shared/models";
+import {
+  getLogoUrlById,
+  normalizeHexColor,
+  type ModelCatalogEntry,
+} from "./shared/models";
 
-type Model = { id: string; name: string };
+type Model = { id: string; name: string; color?: string; logoId?: string };
 type TaskInfo = {
   model: Model;
   startedAt: number;
@@ -43,6 +47,7 @@ type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  models: ModelCatalogEntry[];
   enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
@@ -62,17 +67,8 @@ type ViewerCountMessage = {
 };
 type ServerMessage = StateMessage | ViewerCountMessage;
 
-const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3 Flash": "#4285F4",
-  "Kimi K2": "#00E599",
-  "DeepSeek 3.2": "#4D6BFE",
-  "Qwen 3.5 Plus": "#E67E22",
-  "GLM-5": "#1F63EC",
-  "GPT-5.2": "#10A37F",
-  "Sonnet 4.6": "#D97757",
-  "Grok 4.1": "#FFFFFF",
-  "MiniMax 2.5": "#FF3B30",
-};
+const DEFAULT_UI_COLOR = "#A1A1A1";
+let modelCatalogByName = new Map<string, ModelCatalogEntry>();
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -101,29 +97,34 @@ const convexApi = api as any;
 const countdownTracker = createVotingCountdownTracker();
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
 
-function getColor(name: string): string {
-  return MODEL_COLORS[name] ?? "#aeb6d6";
+function syncModelCatalog(models: ModelCatalogEntry[]) {
+  modelCatalogByName = new Map(models.map((model) => [model.name, model]));
 }
 
-function getLogoUrl(name: string): string | null {
-  if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
-  if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
-  if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
-  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
-  if (name.includes("GLM")) return "/assets/logos/glm.svg";
-  if (name.includes("GPT")) return "/assets/logos/openai.svg";
-  if (name.includes("Opus") || name.includes("Sonnet")) return "/assets/logos/claude.svg";
-  if (name.includes("Grok")) return "/assets/logos/grok.svg";
-  if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
-  return null;
+function getColor(name: string, fallbackColor?: string): string {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return normalizeHexColor(fromCatalog.color);
+  return normalizeHexColor(fallbackColor) || DEFAULT_UI_COLOR;
+}
+
+function getLogoUrl(name: string, fallbackLogoId?: string): string | null {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return getLogoUrlById(fromCatalog.logoId);
+  return getLogoUrlById(fallbackLogoId);
 }
 
 const logoCache: Record<string, HTMLImageElement> = {};
 const brandLogo = new Image();
 brandLogo.src = "/assets/logo.svg";
 
-function drawModelLogo(name: string, x: number, y: number, size: number): boolean {
-  const url = getLogoUrl(name);
+function drawModelLogo(
+  name: string,
+  x: number,
+  y: number,
+  size: number,
+  fallbackLogoId?: string,
+): boolean {
+  const url = getLogoUrl(name, fallbackLogoId);
   if (!url) return false;
   if (!logoCache[url]) {
     const img = new Image();
@@ -145,15 +146,10 @@ function getConvexUrl(): string {
   return url.replace(/\/$/, "");
 }
 
-const MODEL_NAME_BY_ID = new Map<string, string>(
-  MODELS.map((model) => [model.id, model.name]),
-);
-
-function getEnabledModelNames(enabledModelIds: string[]): string[] {
-  const names = enabledModelIds
-    .map((id) => MODEL_NAME_BY_ID.get(id))
-    .filter((name): name is string => Boolean(name));
-  return names.length > 0 ? names : MODELS.map((model) => model.name);
+function getEnabledModelNames(models: ModelCatalogEntry[]): string[] {
+  return models
+    .filter((model) => model.enabled && !model.archivedAt)
+    .map((model) => model.name);
 }
 
 type RankingEntry = {
@@ -517,8 +513,8 @@ function drawRound(round: RoundState, roundNumber: number) {
   ctx.fillText(promptedText, 64, 210);
 
   const pTw = ctx.measureText(promptedText).width;
-  ctx.fillStyle = getColor(round.prompter.name);
-  const drewPLogo = drawModelLogo(round.prompter.name, 64 + pTw, 210 - 14, 20);
+  ctx.fillStyle = getColor(round.prompter.name, round.prompter.color);
+  const drewPLogo = drawModelLogo(round.prompter.name, 64 + pTw, 210 - 14, 20, round.prompter.logoId);
 
   if (drewPLogo) {
     ctx.fillText(round.prompter.name.toUpperCase(), 64 + pTw + 24, 210);
@@ -544,7 +540,7 @@ function drawRound(round: RoundState, roundNumber: number) {
   const promptBaselineY = 262;
   const promptBarY = promptBaselineY - 44;
 
-  ctx.fillStyle = getColor(round.prompter.name);
+  ctx.fillStyle = getColor(round.prompter.name, round.prompter.color);
   ctx.fillRect(64, promptBarY, 4, promptTextHeight + 6);
 
   drawTextBlock(
@@ -589,7 +585,7 @@ function drawContestantCard(
   const voteCount = isFirst ? votesA : votesB;
   const isWinner = !round.skipped && round.phase === "done" && voteCount > (isFirst ? votesB : votesA);
   
-  const color = getColor(task.model.name);
+  const color = getColor(task.model.name, task.model.color);
   
   ctx.fillStyle = color;
   ctx.fillRect(x, y, isWinner ? 6 : 4, h);
@@ -600,7 +596,7 @@ function drawContestantCard(
 
   ctx.font = '700 32px "Inter", sans-serif';
   ctx.fillStyle = color;
-  const drewCLogo = drawModelLogo(task.model.name, x + 24, y + 16, 32);
+  const drewCLogo = drawModelLogo(task.model.name, x + 24, y + 16, 32, task.model.logoId);
   if (drewCLogo) {
     ctx.fillText(task.model.name, x + 64, y + 44);
   } else {
@@ -668,8 +664,8 @@ function drawContestantCard(
     const avatarSize = 28;
 
     for (const v of taskVoters) {
-      const vColor = getColor(v.voter.name);
-      const drewLogo = drawModelLogo(v.voter.name, avatarX, avatarY, avatarSize);
+      const vColor = getColor(v.voter.name, v.voter.color);
+      const drewLogo = drawModelLogo(v.voter.name, avatarX, avatarY, avatarSize, v.voter.logoId);
 
       if (!drewLogo) {
         ctx.beginPath();
@@ -810,12 +806,12 @@ function drawNextPromptNotice(prompter: Model, reserveRightPx = 0) {
   const startX = Math.max(minX, maxX - totalW);
   let cursorX = startX;
 
-  if (drawModelLogo(prompter.name, cursorX, y - 14, logoSize)) {
+  if (drawModelLogo(prompter.name, cursorX, y - 14, logoSize, prompter.logoId)) {
     cursorX += logoSize + gap;
   }
 
   ctx.font = '700 18px "Inter", sans-serif';
-  ctx.fillStyle = getColor(modelLabel);
+  ctx.fillStyle = getColor(modelLabel, prompter.color);
   ctx.fillText(modelLabel, cursorX, y + 2);
   cursorX += modelW + gap;
 
@@ -838,7 +834,9 @@ function draw() {
     drawWaiting();
       return;
   }
-  const enabledModelNames = getEnabledModelNames(state.enabledModelIds ?? []);
+  const catalogModels = state.models ?? [];
+  syncModelCatalog(catalogModels);
+  const enabledModelNames = getEnabledModelNames(catalogModels);
 
   drawScoreboard(
     state.scores ?? {},

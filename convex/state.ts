@@ -1,7 +1,6 @@
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { DEFAULT_SCORES } from "./constants";
-import { DEFAULT_ENABLED_MODEL_IDS, normalizeEnabledModelIds } from "../shared/models";
 
 type EngineReadCtx = Pick<QueryCtx, "db">;
 
@@ -14,12 +13,6 @@ export function normalizeScoreRecord(
     normalized[name] = Number.isFinite(score) ? score : 0;
   }
   return normalized;
-}
-
-export function normalizeStateEnabledModelIds(
-  input?: string[],
-): string[] {
-  return normalizeEnabledModelIds(input);
 }
 
 export async function getEngineState(
@@ -45,7 +38,7 @@ export async function getOrCreateEngineState(
     scores: { ...DEFAULT_SCORES },
     humanScores: { ...DEFAULT_SCORES },
     humanVoteTotals: { ...DEFAULT_SCORES },
-    enabledModelIds: [...DEFAULT_ENABLED_MODEL_IDS],
+    enabledModelIds: [],
     completedRounds: 0,
     updatedAt: now,
   });

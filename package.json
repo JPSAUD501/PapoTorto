@@ -11,7 +11,6 @@
     "build:web": "vite build",
     "preview:web": "vite preview --host 0.0.0.0 --port 5109",
     "start": "vite preview --host 0.0.0.0 --port 5109",
-    "start:cli": "bun papotorto.tsx",
     "start:stream": "bun ./scripts/stream-browser.ts live",
     "start:stream:dryrun": "bun ./scripts/stream-browser.ts dryrun"
   },
@@ -30,7 +29,6 @@
     "@openrouter/ai-sdk-provider": "^2.2.3",
     "ai": "^6.0.94",
     "convex": "^1.32.0",
-    "ink": "^6.8.0",
     "puppeteer": "^24.2.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

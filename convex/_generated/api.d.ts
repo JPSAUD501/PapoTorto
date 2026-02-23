@@ -16,6 +16,7 @@ import type * as engineRunner from "../engineRunner.js";
 import type * as history from "../history.js";
 import type * as http from "../http.js";
 import type * as live from "../live.js";
+import type * as models from "../models.js";
 import type * as platformViewers from "../platformViewers.js";
 import type * as rounds from "../rounds.js";
 import type * as state from "../state.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   history: typeof history;
   http: typeof http;
   live: typeof live;
+  models: typeof models;
   platformViewers: typeof platformViewers;
   rounds: typeof rounds;
   state: typeof state;

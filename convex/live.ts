@@ -8,8 +8,12 @@ import {
   getEngineState,
   getOrCreateEngineState,
   normalizeScoreRecord,
-  normalizeStateEnabledModelIds,
 } from "./state";
+import {
+  ensureModelCatalogSeededImpl,
+  getEnabledModelIds,
+  listModelCatalog,
+} from "./models";
 import { readTotalViewerCount } from "./viewerCount";
 
 function getPollIntervalMs(): number {
@@ -27,6 +31,7 @@ export const getState = query({
       scores: v.record(v.string(), v.number()),
       humanScores: v.record(v.string(), v.number()),
       humanVoteTotals: v.record(v.string(), v.number()),
+      models: v.array(v.any()),
       enabledModelIds: v.array(v.string()),
       done: v.boolean(),
       isPaused: v.boolean(),
@@ -38,6 +43,8 @@ export const getState = query({
   }),
   handler: async (ctx) => {
     const state = await getEngineState(ctx as any);
+    const models = await listModelCatalog(ctx as any);
+    const enabledModelIds = getEnabledModelIds(models);
     if (!state) {
       return {
         data: {
@@ -46,7 +53,8 @@ export const getState = query({
           scores: {},
           humanScores: {},
           humanVoteTotals: {},
-          enabledModelIds: normalizeStateEnabledModelIds(undefined),
+          models,
+          enabledModelIds,
           done: false,
           isPaused: false,
           generation: 1,
@@ -90,7 +98,8 @@ export const getState = query({
         scores: state.scores,
         humanScores: normalizeScoreRecord(state.humanScores),
         humanVoteTotals: normalizeScoreRecord(state.humanVoteTotals),
-        enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
+        models,
+        enabledModelIds,
         done: state.done,
         isPaused: state.isPaused,
         generation: state.generation,
@@ -104,6 +113,7 @@ export const getState = query({
 
 async function ensureStartedImpl(ctx: any) {
   const now = Date.now();
+  const catalog = await ensureModelCatalogSeededImpl(ctx as any);
   const state = await getOrCreateEngineState(ctx as any);
   const patch: Record<string, unknown> = {};
 
@@ -144,9 +154,7 @@ async function ensureStartedImpl(ctx: any) {
     patch.humanScores = normalizeScoreRecord(state.humanScores);
     patch.humanVoteTotals = normalizeScoreRecord(state.humanVoteTotals);
   }
-  if (state.enabledModelIds === undefined) {
-    patch.enabledModelIds = normalizeStateEnabledModelIds(state.enabledModelIds);
-  }
+  patch.enabledModelIds = getEnabledModelIds(catalog);
 
   if (Object.keys(patch).length > 0) {
     await ctx.db.patch(state._id, {

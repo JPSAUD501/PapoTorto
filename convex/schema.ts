@@ -4,6 +4,8 @@ import { v } from "convex/values";
 const modelValidator = v.object({
   id: v.string(),
   name: v.string(),
+  color: v.optional(v.string()),
+  logoId: v.optional(v.string()),
 });
 
 const taskValidator = v.object({
@@ -23,6 +25,21 @@ const storedVoteValidator = v.object({
 });
 
 export default defineSchema({
+  models: defineTable({
+    modelId: v.string(),
+    name: v.string(),
+    color: v.string(),
+    logoId: v.string(),
+    enabled: v.boolean(),
+    archivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_modelId", ["modelId"])
+    .index("by_name", ["name"])
+    .index("by_enabled", ["enabled"])
+    .index("by_archivedAt", ["archivedAt"]),
+
   engineState: defineTable({
     key: v.literal("main"),
     generation: v.number(),

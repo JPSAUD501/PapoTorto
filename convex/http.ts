@@ -113,6 +113,10 @@ for (const path of [
   "/admin/viewer-targets/delete",
   "/admin/status",
   "/admin/models",
+  "/admin/models/update",
+  "/admin/models/enable",
+  "/admin/models/remove",
+  "/admin/models/restore",
   "/admin/pause",
   "/admin/resume",
   "/admin/reset",
@@ -140,7 +144,8 @@ http.route({
     }
 
     await ctx.runMutation(convexInternal.live.ensureStartedInternal, {});
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, ...snapshot });
   }),
 });
@@ -243,8 +248,22 @@ http.route({
     if (!isAuthorized(request)) {
       return text(request, "Unauthorized", 401);
     }
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    return json(request, { ok: true, models });
   }),
 });
 
@@ -255,6 +274,124 @@ http.route({
     if (!isAuthorized(request)) {
       return text(request, "Unauthorized", 401);
     }
+
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as {
+      modelId?: string;
+      name?: string;
+      color?: string;
+      logoId?: string;
+      enabled?: boolean;
+    };
+    if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
+      return text(request, "Invalid modelId", 400);
+    }
+    if (typeof payload.name !== "string" || !payload.name.trim()) {
+      return text(request, "Invalid name", 400);
+    }
+    if (typeof payload.color !== "string" || !payload.color.trim()) {
+      return text(request, "Invalid color", 400);
+    }
+    if (typeof payload.logoId !== "string" || !payload.logoId.trim()) {
+      return text(request, "Invalid logoId", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.models.createModel, {
+        modelId: payload.modelId.trim(),
+        name: payload.name.trim(),
+        color: payload.color.trim(),
+        logoId: payload.logoId.trim(),
+        enabled: payload.enabled !== false,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to create model", 400);
+    }
+
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, models, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models/update",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as {
+      originalModelId?: string;
+      modelId?: string;
+      name?: string;
+      color?: string;
+      logoId?: string;
+      enabled?: boolean;
+    };
+
+    if (typeof payload.originalModelId !== "string" || !payload.originalModelId.trim()) {
+      return text(request, "Invalid originalModelId", 400);
+    }
+    if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
+      return text(request, "Invalid modelId", 400);
+    }
+    if (typeof payload.name !== "string" || !payload.name.trim()) {
+      return text(request, "Invalid name", 400);
+    }
+    if (typeof payload.color !== "string" || !payload.color.trim()) {
+      return text(request, "Invalid color", 400);
+    }
+    if (typeof payload.logoId !== "string" || !payload.logoId.trim()) {
+      return text(request, "Invalid logoId", 400);
+    }
+    if (typeof payload.enabled !== "boolean") {
+      return text(request, "Invalid enabled", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.models.updateModel, {
+        originalModelId: payload.originalModelId.trim(),
+        modelId: payload.modelId.trim(),
+        name: payload.name.trim(),
+        color: payload.color.trim(),
+        logoId: payload.logoId.trim(),
+        enabled: payload.enabled,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to update model", 400);
+    }
+
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, models, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models/enable",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
 
     let body: unknown;
     try {
@@ -268,11 +405,11 @@ http.route({
       return text(request, "Invalid modelId", 400);
     }
     if (typeof payload.enabled !== "boolean") {
-      return text(request, "Invalid enabled flag", 400);
+      return text(request, "Invalid enabled", 400);
     }
 
     try {
-      await ctx.runMutation(convexInternal.admin.setModelEnabled, {
+      await ctx.runMutation(convexInternal.models.setModelEnabled, {
         modelId: payload.modelId.trim(),
         enabled: payload.enabled,
       });
@@ -280,8 +417,80 @@ http.route({
       return text(request, error instanceof Error ? error.message : "Failed to update model", 400);
     }
 
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
-    return json(request, { ok: true, ...snapshot });
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, models, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models/remove",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as { modelId?: string };
+    if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
+      return text(request, "Invalid modelId", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.models.archiveModel, {
+        modelId: payload.modelId.trim(),
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to remove model", 400);
+    }
+
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, models, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models/restore",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    await ctx.runMutation(convexInternal.models.ensureModelCatalogSeeded, {});
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as { modelId?: string; enabled?: boolean };
+    if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
+      return text(request, "Invalid modelId", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.models.restoreModel, {
+        modelId: payload.modelId.trim(),
+        enabled: payload.enabled,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to restore model", 400);
+    }
+
+    const models = await ctx.runQuery(convexInternal.models.listModels, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, models, ...snapshot });
   }),
 });
 
@@ -293,7 +502,7 @@ http.route({
       return text(request, "Unauthorized", 401);
     }
     await ctx.runMutation(convexInternal.admin.pause, {});
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, action: "Paused", ...snapshot });
   }),
 });
@@ -306,7 +515,7 @@ http.route({
       return text(request, "Unauthorized", 401);
     }
     await ctx.runMutation(convexInternal.admin.resume, {});
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, action: "Resumed", ...snapshot });
   }),
 });
@@ -319,7 +528,7 @@ http.route({
       return text(request, "Unauthorized", 401);
     }
     await ctx.runMutation(convexInternal.admin.reset, {});
-    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    const snapshot = await ctx.runMutation(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, ...snapshot });
   }),
 });

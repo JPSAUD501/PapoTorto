@@ -1,4 +1,4 @@
-import type { Model } from "./models";
+import type { Model, ModelCatalogEntry } from "./models";
 
 export type TaskInfo = {
   model: Model;
@@ -42,6 +42,7 @@ export type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  models: ModelCatalogEntry[];
   enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
@@ -62,5 +63,8 @@ export type AdminSnapshot = {
   completedInMemory: number;
   persistedRounds: number;
   viewerCount: number;
+  activeModelCount: number;
+  canRunRounds: boolean;
+  runBlockedReason: "insufficient_active_models" | null;
   enabledModelIds: string[];
 };

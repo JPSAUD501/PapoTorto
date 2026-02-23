@@ -4,7 +4,7 @@ import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { getEnabledModels, type Model } from "../shared/models";
+import type { Model } from "../shared/models";
 import {
   POST_ROUND_DELAY_MS,
   RUNNER_LEASE_HEARTBEAT_MS,
@@ -85,7 +85,10 @@ export const runLoop = internalAction({
       return null;
     }
 
-    const enabledModels = getEnabledModels(state.enabledModelIds);
+    const enabledModels = (await ctx.runQuery(
+      convexInternal.models.listActiveForRuntime,
+      {},
+    )) as Model[];
     if (enabledModels.length < 3) {
       await ctx.scheduler.runAfter(1_000, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
       return null;

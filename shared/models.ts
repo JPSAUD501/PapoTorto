@@ -1,54 +1,89 @@
-export const MODELS = [
-  { id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash" },
-  { id: "moonshotai/kimi-k2-0905", name: "Kimi K2" },
-  { id: "deepseek/deepseek-v3.2", name: "DeepSeek 3.2" },
-  { id: "minimax/minimax-m2.5", name: "MiniMax 2.5" },
-  { id: "z-ai/glm-5", name: "GLM-5" },
-  { id: "openai/gpt-5.2", name: "GPT-5.2" },
-  { id: "anthropic/claude-sonnet-4.6", name: "Sonnet 4.6" },
-  { id: "x-ai/grok-4.1-fast", name: "Grok 4.1" },
+export const AVAILABLE_MODEL_LOGO_IDS = [
+  "claude",
+  "deepseek",
+  "gemini",
+  "glm",
+  "grok",
+  "kimi",
+  "minimax",
+  "openai",
+  "qwen",
 ] as const;
 
-export type Model = (typeof MODELS)[number];
-export type ModelId = Model["id"];
+export const AVAILABLE_MODEL_COLORS = [
+  "#10A37F",
+  "#14B8A6",
+  "#06B6D4",
+  "#0EA5E9",
+  "#3B82F6",
+  "#6366F1",
+  "#8B5CF6",
+  "#A855F7",
+  "#D946EF",
+  "#EC4899",
+  "#F43F5E",
+  "#EF4444",
+  "#F97316",
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#22C55E",
+  "#16A34A",
+  "#10B981",
+  "#2DD4BF",
+  "#38BDF8",
+  "#60A5FA",
+  "#F87171",
+  "#FB7185",
+] as const;
 
-const MODEL_BY_ID = new Map<string, Model>(MODELS.map((model) => [model.id, model]));
+export type ModelLogoId = (typeof AVAILABLE_MODEL_LOGO_IDS)[number];
 
-export const DEFAULT_ENABLED_MODEL_IDS = MODELS.map((model) => model.id) as ModelId[];
-
-export function normalizeEnabledModelIds(input?: string[]): ModelId[] {
-  if (!input) return [...DEFAULT_ENABLED_MODEL_IDS];
-
-  const deduped: ModelId[] = [];
-  const seen = new Set<string>();
-  for (const candidate of input) {
-    if (seen.has(candidate)) continue;
-    const model = MODEL_BY_ID.get(candidate);
-    if (!model) continue;
-    deduped.push(model.id);
-    seen.add(model.id);
-  }
-
-  if (deduped.length > 0) {
-    return deduped;
-  }
-  return [...DEFAULT_ENABLED_MODEL_IDS];
-}
-
-export function getEnabledModels(enabledModelIds?: string[]): Model[] {
-  const normalizedIds = normalizeEnabledModelIds(enabledModelIds);
-  return normalizedIds
-    .map((id) => MODEL_BY_ID.get(id))
-    .filter((model): model is Model => Boolean(model));
-}
-
-export const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3 Flash": "#4285F4",
-  "Kimi K2": "#00E599",
-  "DeepSeek 3.2": "#4D6BFE",
-  "GLM-5": "#1F63EC",
-  "GPT-5.2": "#10A37F",
-  "Sonnet 4.6": "#D97757",
-  "Grok 4.1": "#FFFFFF",
-  "MiniMax 2.5": "#FF3B30",
+export type Model = {
+  id: string;
+  name: string;
+  color?: string;
+  logoId?: ModelLogoId;
 };
+
+export type ModelCatalogEntry = {
+  _id?: string;
+  modelId: string;
+  name: string;
+  color: string;
+  logoId: ModelLogoId;
+  enabled: boolean;
+  archivedAt?: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+export const DEFAULT_MODEL_COLOR = "#A1A1A1";
+
+const LOGO_ID_SET = new Set<string>(AVAILABLE_MODEL_LOGO_IDS);
+
+export function isValidModelLogoId(value: string): value is ModelLogoId {
+  return LOGO_ID_SET.has(value);
+}
+
+export function getLogoUrlById(logoId?: string | null): string | null {
+  if (!logoId || !isValidModelLogoId(logoId)) return null;
+  return `/assets/logos/${logoId}.svg`;
+}
+
+export function normalizeHexColor(input?: string | null): string {
+  const value = (input ?? "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+    return value.toUpperCase();
+  }
+  return DEFAULT_MODEL_COLOR;
+}
+
+export function toRuntimeModel(entry: Pick<ModelCatalogEntry, "modelId" | "name" | "color" | "logoId">): Model {
+  return {
+    id: entry.modelId,
+    name: entry.name,
+    color: normalizeHexColor(entry.color),
+    logoId: entry.logoId,
+  };
+}

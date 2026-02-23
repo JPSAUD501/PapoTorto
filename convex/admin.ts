@@ -3,13 +3,17 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import { DEFAULT_SCORES, PLATFORM_VIEWER_POLL_INTERVAL_MS } from "./constants";
-import { MODELS } from "../shared/models";
 import {
   getEngineState,
   getOrCreateEngineState,
   normalizeScoreRecord,
-  normalizeStateEnabledModelIds,
 } from "./state";
+import {
+  computeRunStatus,
+  ensureModelCatalogSeededImpl,
+  getEnabledModelIds,
+  listModelCatalog,
+} from "./models";
 import { toClientRound } from "./rounds";
 import { readTotalViewerCount } from "./viewerCount";
 
@@ -32,7 +36,7 @@ function getViewerPollIntervalMs(): number {
   return raw;
 }
 
-export const getSnapshot = internalQuery({
+export const getSnapshot = internalMutation({
   args: {},
   returns: v.object({
     isPaused: v.boolean(),
@@ -41,10 +45,27 @@ export const getSnapshot = internalQuery({
     completedInMemory: v.number(),
     persistedRounds: v.number(),
     viewerCount: v.number(),
+    activeModelCount: v.number(),
+    canRunRounds: v.boolean(),
+    runBlockedReason: v.union(v.literal("insufficient_active_models"), v.null()),
     enabledModelIds: v.array(v.string()),
   }),
   handler: async (ctx) => {
     const state = await getEngineState(ctx as any);
+    const models = await ensureModelCatalogSeededImpl(ctx as any);
+    const status = computeRunStatus(models);
+    const enabledModelIds = getEnabledModelIds(models);
+
+    if (
+      state &&
+      JSON.stringify(state.enabledModelIds ?? []) !== JSON.stringify(enabledModelIds)
+    ) {
+      await ctx.db.patch(state._id, {
+        enabledModelIds,
+        updatedAt: Date.now(),
+      });
+    }
+
     if (!state) {
       return {
         isPaused: false,
@@ -53,7 +74,10 @@ export const getSnapshot = internalQuery({
         completedInMemory: 0,
         persistedRounds: 0,
         viewerCount: 0,
-        enabledModelIds: MODELS.map((model) => model.id),
+        activeModelCount: status.activeModelCount,
+        canRunRounds: status.canRunRounds,
+        runBlockedReason: status.runBlockedReason,
+        enabledModelIds,
       };
     }
 
@@ -71,7 +95,10 @@ export const getSnapshot = internalQuery({
       completedInMemory: state.completedRounds,
       persistedRounds: doneRounds.length,
       viewerCount: await readTotalViewerCount(ctx),
-      enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
+      activeModelCount: status.activeModelCount,
+      canRunRounds: status.canRunRounds,
+      runBlockedReason: status.runBlockedReason,
+      enabledModelIds,
     };
   },
 });
@@ -206,48 +233,12 @@ export const resume = internalMutation({
   },
 });
 
-export const setModelEnabled = internalMutation({
-  args: {
-    modelId: v.string(),
-    enabled: v.boolean(),
-  },
-  returns: v.object({
-    enabledModelIds: v.array(v.string()),
-  }),
-  handler: async (ctx, args) => {
-    const state = await getOrCreateEngineState(ctx as any);
-    const knownModelIds = new Set(MODELS.map((model) => model.id));
-    if (!knownModelIds.has(args.modelId)) {
-      throw new Error("Modelo invalido.");
-    }
-    const modelId = args.modelId as (typeof MODELS)[number]["id"];
-
-    const nextEnabled = new Set(normalizeStateEnabledModelIds(state.enabledModelIds));
-    if (args.enabled) {
-      nextEnabled.add(modelId);
-    } else {
-      nextEnabled.delete(modelId);
-    }
-
-    const ordered = MODELS.map((model) => model.id).filter((id) => nextEnabled.has(id));
-    if (ordered.length < 3) {
-      throw new Error("Mantenha pelo menos 3 modelos ativos.");
-    }
-
-    await ctx.db.patch(state._id, {
-      enabledModelIds: ordered,
-      updatedAt: Date.now(),
-    });
-
-    return { enabledModelIds: ordered };
-  },
-});
-
 export const reset = internalMutation({
   args: {},
   returns: v.object({ generation: v.number() }),
   handler: async (ctx) => {
     const state = await getOrCreateEngineState(ctx as any);
+    const models = await listModelCatalog(ctx as any);
     const oldGeneration = state.generation;
     const nextGeneration = oldGeneration + 1;
 
@@ -262,7 +253,7 @@ export const reset = internalMutation({
       scores: { ...DEFAULT_SCORES },
       humanScores: { ...DEFAULT_SCORES },
       humanVoteTotals: { ...DEFAULT_SCORES },
-      enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
+      enabledModelIds: getEnabledModelIds(models),
       runnerLeaseId: undefined,
       runnerLeaseUntil: undefined,
       reaperScheduledAt: undefined,
@@ -338,6 +329,7 @@ export const getExportData = internalQuery({
       return {
         exportedAt: new Date().toISOString(),
         state: null,
+        models: await ctx.db.query("models").collect(),
         viewerTargets: await ctx.db.query("viewerTargets").collect(),
         rounds: [],
       };
@@ -351,6 +343,7 @@ export const getExportData = internalQuery({
     return {
       exportedAt: new Date().toISOString(),
       state,
+      models: await ctx.db.query("models").collect(),
       viewerTargets: await ctx.db.query("viewerTargets").collect(),
       rounds: rounds.map((round: any) => toClientRound(round)).filter(Boolean),
     };

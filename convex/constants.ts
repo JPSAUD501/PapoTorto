@@ -1,5 +1,3 @@
-import { MODELS } from "../shared/models";
-
 export const VIEWER_SHARD_COUNT = 64;
 export const VIEWER_SESSION_TTL_MS = 30_000;
 export const VIEWER_REAPER_INTERVAL_MS = 5_000;
@@ -19,7 +17,7 @@ export const MODEL_PHASE_DEADLINE_MS =
   MODEL_ATTEMPTS * MODEL_CALL_TIMEOUT_MS +
   MODEL_RETRY_BACKOFF_MS.reduce((sum, ms) => sum + ms, 0);
 
-export const DEFAULT_SCORES = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
+export const DEFAULT_SCORES: Record<string, number> = {};
 
 export function hashToShard(input: string, shards = VIEWER_SHARD_COUNT): number {
   let hash = 0;

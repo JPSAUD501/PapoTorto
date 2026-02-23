@@ -1,12 +1,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery } from "convex/react";
+import { ConvexProvider, ConvexReactClient, useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
+import { getLogoUrlById, normalizeHexColor, type ModelCatalogEntry } from "./shared/models";
 import "./history.css";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-type Model = { id: string; name: string };
+type Model = { id: string; name: string; color?: string; logoId?: string };
 type TaskInfo = {
   model: Model;
   startedAt: number;
@@ -42,34 +43,23 @@ type RoundState = {
 
 // ── Shared UI Utils ─────────────────────────────────────────────────────────
 
-const MODEL_COLORS: Record<string, string> = {
-  "Gemini 3 Flash": "#4285F4",
-  "Kimi K2": "#00E599",
-  "DeepSeek 3.2": "#4D6BFE",
-  "Qwen 3.5 Plus": "#E67E22",
-  "GLM-5": "#1F63EC",
-  "GPT-5.2": "#10A37F",
-  "Sonnet 4.6": "#D97757",
-  "Grok 4.1": "#FFFFFF",
-  "MiniMax 2.5": "#FF3B30",
-};
+const DEFAULT_UI_COLOR = "#A1A1A1";
+let modelCatalogByName = new Map<string, ModelCatalogEntry>();
 
-function getColor(name: string): string {
-  return MODEL_COLORS[name] ?? "#A1A1A1";
+function syncModelCatalog(models: ModelCatalogEntry[]) {
+  modelCatalogByName = new Map(models.map((model) => [model.name, model]));
 }
 
-function getLogo(name: string): string | null {
-  if (name.includes("Gemini")) return "/assets/logos/gemini.svg";
-  if (name.includes("Kimi")) return "/assets/logos/kimi.svg";
-  if (name.includes("DeepSeek")) return "/assets/logos/deepseek.svg";
-  if (name.includes("Qwen")) return "/assets/logos/qwen.svg";
-  if (name.includes("GLM")) return "/assets/logos/glm.svg";
-  if (name.includes("GPT")) return "/assets/logos/openai.svg";
-  if (name.includes("Opus") || name.includes("Sonnet"))
-    return "/assets/logos/claude.svg";
-  if (name.includes("Grok")) return "/assets/logos/grok.svg";
-  if (name.includes("MiniMax")) return "/assets/logos/minimax.svg";
-  return null;
+function getColor(name: string, fallbackColor?: string): string {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return normalizeHexColor(fromCatalog.color);
+  return normalizeHexColor(fallbackColor) || DEFAULT_UI_COLOR;
+}
+
+function getLogo(name: string, fallbackLogoId?: string): string | null {
+  const fromCatalog = modelCatalogByName.get(name);
+  if (fromCatalog) return getLogoUrlById(fromCatalog.logoId);
+  return getLogoUrlById(fallbackLogoId);
 }
 
 function getConvexUrl(): string {
@@ -103,8 +93,8 @@ function ModelName({
   model: Model;
   className?: string;
 }) {
-  const logo = getLogo(model.name);
-  const color = getColor(model.name);
+  const logo = getLogo(model.name, model.logoId);
+  const color = getColor(model.name, model.color);
   return (
     <span className={`model-name ${className}`} style={{ color }}>
       {logo && <img src={logo} alt="" className="model-logo" />}
@@ -124,7 +114,7 @@ function HistoryContestant({
   votes: number;
   voters: Model[];
 }) {
-  const color = getColor(task.model.name);
+  const color = getColor(task.model.name, task.model.color);
   return (
     <div className={`history-contestant`} style={{ borderColor: color }}>
       <div className="history-contestant__header">
@@ -139,7 +129,7 @@ function HistoryContestant({
         </div>
         <div className="history-contestant__voters">
           {voters.map((v) => {
-            const logo = getLogo(v.name);
+            const logo = getLogo(v.name, v.logoId);
             if (!logo) return null;
             return (
               <img
@@ -229,17 +219,17 @@ function HistoryCard({ round }: { round: RoundState }) {
           <div className="history-contestant__votes">
             <div
               className="history-contestant__score"
-              style={{ color: getColor(contA.name) }}
+              style={{ color: getColor(contA.name, contA.color) }}
             >
               {votesA} {votesA === 1 ? "voto" : "votos"}
             </div>
             <div className="history-contestant__voters">
               {votersA.map(
                 (v) =>
-                  getLogo(v.name) && (
+                  getLogo(v.name, v.logoId) && (
                     <img
                       key={v.name}
-                      src={getLogo(v.name)!}
+                      src={getLogo(v.name, v.logoId)!}
                       title={v.name}
                       className="voter-mini-logo"
                     />
@@ -270,17 +260,17 @@ function HistoryCard({ round }: { round: RoundState }) {
           <div className="history-contestant__votes">
             <div
               className="history-contestant__score"
-              style={{ color: getColor(contB.name) }}
+              style={{ color: getColor(contB.name, contB.color) }}
             >
               {votesB} {votesB === 1 ? "voto" : "votos"}
             </div>
             <div className="history-contestant__voters">
               {votersB.map(
                 (v) =>
-                  getLogo(v.name) && (
+                  getLogo(v.name, v.logoId) && (
                     <img
                       key={v.name}
-                      src={getLogo(v.name)!}
+                      src={getLogo(v.name, v.logoId)!}
                       title={v.name}
                       className="voter-mini-logo"
                     />
@@ -304,6 +294,9 @@ function HistoryCard({ round }: { round: RoundState }) {
 // ── App ─────────────────────────────────────────────────────────────────────
 
 function App() {
+  const liveState = useQuery(convexApi.live.getState, {}) as
+    | { data: { models: ModelCatalogEntry[] } }
+    | undefined;
   const { results, status, loadMore } = usePaginatedQuery(
     convexApi.history.listPaginated,
     {},
@@ -314,6 +307,10 @@ function App() {
   const ensureStarted = useMutation(convexApi.live.ensureStarted);
   const heartbeat = useMutation(convexApi.viewers.heartbeat);
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
+
+  React.useEffect(() => {
+    syncModelCatalog(liveState?.data.models ?? []);
+  }, [liveState?.data.models]);
 
   React.useEffect(() => {
     const viewerId = getOrCreateViewerId();

@@ -1,6 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { MODELS } from "./shared/models";
+import {
+  AVAILABLE_MODEL_COLORS,
+  AVAILABLE_MODEL_LOGO_IDS,
+  normalizeHexColor,
+  type ModelCatalogEntry,
+} from "./shared/models";
 import "./admin.css";
 
 type AdminSnapshot = {
@@ -10,6 +15,9 @@ type AdminSnapshot = {
   completedInMemory: number;
   persistedRounds: number;
   viewerCount: number;
+  activeModelCount: number;
+  canRunRounds: boolean;
+  runBlockedReason: "insufficient_active_models" | null;
   enabledModelIds: string[];
 };
 
@@ -26,6 +34,7 @@ type ViewerTarget = {
 
 type AdminResponse = { ok: true } & AdminSnapshot;
 type ViewerTargetsResponse = { ok: true; targets: ViewerTarget[] };
+type ModelsResponse = { ok: true; models: ModelCatalogEntry[] } & Partial<AdminSnapshot>;
 type Mode = "checking" | "locked" | "ready";
 
 const RESET_TOKEN = "RESET";
@@ -53,6 +62,11 @@ function writeStoredPasscode(passcode: string) {
 function formatLastPolled(lastPolledAt?: number): string {
   if (!lastPolledAt) return "nunca";
   return new Date(lastPolledAt).toLocaleTimeString("pt-BR");
+}
+
+function formatArchivedAt(archivedAt?: number): string {
+  if (!archivedAt) return "ativo";
+  return `arquivado em ${new Date(archivedAt).toLocaleString("pt-BR")}`;
 }
 
 async function readErrorMessage(res: Response): Promise<string> {
@@ -97,6 +111,7 @@ function StatusCard({ label, value }: { label: string; value: string }) {
 function App() {
   const [mode, setMode] = useState<Mode>("checking");
   const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
+  const [models, setModels] = useState<ModelCatalogEntry[]>([]);
   const [viewerTargets, setViewerTargets] = useState<ViewerTarget[]>([]);
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +122,14 @@ function App() {
   const [targetValue, setTargetValue] = useState("");
   const [targetEnabled, setTargetEnabled] = useState(true);
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [modelId, setModelId] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [modelColor, setModelColor] = useState<string>(AVAILABLE_MODEL_COLORS[0]);
+  const [modelLogoId, setModelLogoId] = useState<(typeof AVAILABLE_MODEL_LOGO_IDS)[number]>("openai");
+  const [modelEnabled, setModelEnabled] = useState(true);
+  const [editingModelOriginalId, setEditingModelOriginalId] = useState<string | null>(null);
+  const [isModelFormOpen, setIsModelFormOpen] = useState(false);
+  const [showArchivedModels, setShowArchivedModels] = useState(false);
 
   async function loadViewerTargets(passcodeToUse: string) {
     const response = await requestAdminJson<ViewerTargetsResponse>(
@@ -114,6 +137,11 @@ function App() {
       passcodeToUse,
     );
     setViewerTargets(response.targets);
+  }
+
+  async function loadModels(passcodeToUse: string) {
+    const response = await requestAdminJson<ModelsResponse>("/admin/models", passcodeToUse);
+    setModels(response.models);
   }
 
   useEffect(() => {
@@ -128,9 +156,13 @@ function App() {
         setSnapshot(data);
         setMode("ready");
         try {
-          await loadViewerTargets(storedPasscode);
+          await Promise.all([
+            loadViewerTargets(storedPasscode),
+            loadModels(storedPasscode),
+          ]);
         } catch {
           setViewerTargets([]);
+          setModels([]);
         }
       })
       .catch(() => {
@@ -140,18 +172,57 @@ function App() {
   }, []);
 
   const busy = useMemo(() => pending !== null, [pending]);
-  const enabledModelIds = useMemo(() => {
-    const fromSnapshot = snapshot?.enabledModelIds ?? [];
-    if (fromSnapshot.length > 0) return fromSnapshot;
-    return MODELS.map((model) => model.id);
-  }, [snapshot?.enabledModelIds]);
-  const enabledModelsSet = useMemo(() => new Set(enabledModelIds), [enabledModelIds]);
+  const activeModels = useMemo(
+    () => models.filter((model) => model.enabled && !model.archivedAt),
+    [models],
+  );
+  const visibleModels = useMemo(
+    () => (showArchivedModels ? models : models.filter((model) => !model.archivedAt)),
+    [models, showArchivedModels],
+  );
+  const modelColorOptions = useMemo(() => {
+    const normalizedSelected = normalizeHexColor(modelColor);
+    if (AVAILABLE_MODEL_COLORS.includes(normalizedSelected as (typeof AVAILABLE_MODEL_COLORS)[number])) {
+      return AVAILABLE_MODEL_COLORS;
+    }
+    return [normalizedSelected, ...AVAILABLE_MODEL_COLORS];
+  }, [modelColor]);
 
   function resetTargetForm() {
     setTargetPlatform("twitch");
     setTargetValue("");
     setTargetEnabled(true);
     setEditingTargetId(null);
+  }
+
+  function resetModelForm() {
+    setModelId("");
+    setModelName("");
+    setModelColor(AVAILABLE_MODEL_COLORS[0]);
+    setModelLogoId("openai");
+    setModelEnabled(true);
+    setEditingModelOriginalId(null);
+    setIsModelFormOpen(false);
+  }
+
+  function openCreateModelForm() {
+    setModelId("");
+    setModelName("");
+    setModelColor(AVAILABLE_MODEL_COLORS[0]);
+    setModelLogoId("openai");
+    setModelEnabled(true);
+    setEditingModelOriginalId(null);
+    setIsModelFormOpen(true);
+  }
+
+  function hydrateModelForm(model: ModelCatalogEntry) {
+    setModelId(model.modelId);
+    setModelName(model.name);
+    setModelColor(normalizeHexColor(model.color));
+    setModelLogoId(model.logoId);
+    setModelEnabled(model.enabled);
+    setEditingModelOriginalId(model.modelId);
+    setIsModelFormOpen(true);
   }
 
   async function onLogin(event: React.FormEvent) {
@@ -166,7 +237,7 @@ function App() {
       setSnapshot(data);
       setPasscode("");
       setMode("ready");
-      await loadViewerTargets(passcode);
+      await Promise.all([loadViewerTargets(passcode), loadModels(passcode)]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao entrar");
     } finally {
@@ -318,16 +389,72 @@ function App() {
     }
   }
 
-  async function onToggleModel(modelId: string, enabled: boolean) {
+  async function onRefreshModels() {
     setError(null);
-    setPending(`toggle-model:${modelId}`);
+    setPending("refresh-models");
     try {
       const passcodeValue = readStoredPasscode();
-      const data = await requestAdminJson<AdminResponse>("/admin/models", passcodeValue, {
+      await loadModels(passcodeValue);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao recarregar modelos");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onSaveModel(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setPending("save-model");
+    try {
+      const passcodeValue = readStoredPasscode();
+      const isEditing = Boolean(editingModelOriginalId);
+      const path = isEditing ? "/admin/models/update" : "/admin/models";
+      const body = isEditing
+        ? {
+            originalModelId: editingModelOriginalId,
+            modelId: modelId.trim(),
+            name: modelName.trim(),
+            color: normalizeHexColor(modelColor),
+            logoId: modelLogoId,
+            enabled: modelEnabled,
+          }
+        : {
+            modelId: modelId.trim(),
+            name: modelName.trim(),
+            color: normalizeHexColor(modelColor),
+            logoId: modelLogoId,
+            enabled: modelEnabled,
+          };
+      const data = await requestAdminJson<ModelsResponse>(path, passcodeValue, {
         method: "POST",
-        body: JSON.stringify({ modelId, enabled }),
+        body: JSON.stringify(body),
       });
-      setSnapshot(data);
+      setModels(data.models);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
+      resetModelForm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar modelo");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onToggleModel(modelIdValue: string, enabled: boolean) {
+    setError(null);
+    setPending(`toggle-model:${modelIdValue}`);
+    try {
+      const passcodeValue = readStoredPasscode();
+      const data = await requestAdminJson<ModelsResponse>("/admin/models/enable", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify({ modelId: modelIdValue, enabled }),
+      });
+      setModels(data.models);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao atualizar modelo";
       const lowered = message.toLowerCase();
@@ -336,6 +463,44 @@ function App() {
         setSnapshot(null);
       }
       setError(message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onRemoveModel(modelIdValue: string) {
+    setError(null);
+    setPending(`remove-model:${modelIdValue}`);
+    try {
+      const passcodeValue = readStoredPasscode();
+      const data = await requestAdminJson<ModelsResponse>("/admin/models/remove", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify({ modelId: modelIdValue }),
+      });
+      setModels(data.models);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao arquivar modelo");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onRestoreModel(modelIdValue: string) {
+    setError(null);
+    setPending(`restore-model:${modelIdValue}`);
+    try {
+      const passcodeValue = readStoredPasscode();
+      const data = await requestAdminJson<ModelsResponse>("/admin/models/restore", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify({ modelId: modelIdValue, enabled: true }),
+      });
+      setModels(data.models);
+      const status = await requestAdminJson<AdminResponse>("/admin/status", passcodeValue);
+      setSnapshot(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao desarquivar modelo");
     } finally {
       setPending(null);
     }
@@ -354,9 +519,11 @@ function App() {
     try {
       writeStoredPasscode("");
       setSnapshot(null);
+      setModels([]);
       setViewerTargets([]);
       setPasscode("");
       resetTargetForm();
+      resetModelForm();
       setMode("locked");
     } finally {
       setPending(null);
@@ -446,8 +613,8 @@ function App() {
         <div className="panel-head">
           <h1>Console Admin</h1>
           <p>
-            Pausar ou retomar o loop do jogo, exportar dados e configurar
-            targets de audiencia para Twitch e YouTube.
+            Pausar ou retomar o loop do jogo, gerenciar o catalogo de modelos,
+            exportar dados e configurar targets de audiencia para Twitch e YouTube.
           </p>
         </div>
 
@@ -466,8 +633,22 @@ function App() {
             label="Rodadas Persistidas"
             value={String(snapshot?.persistedRounds ?? 0)}
           />
+          <StatusCard
+            label="Modelos Ativos"
+            value={String(snapshot?.activeModelCount ?? activeModels.length)}
+          />
+          <StatusCard
+            label="Execucao"
+            value={snapshot?.canRunRounds ? "Pronto" : "Bloqueado (<3 modelos)"}
+          />
           <StatusCard label="Espectadores" value={String(snapshot?.viewerCount ?? 0)} />
         </section>
+
+        {snapshot?.runBlockedReason === "insufficient_active_models" && (
+          <div className="error-banner">
+            Motor aguardando: ative ao menos 3 modelos para voltar a gerar rodadas.
+          </div>
+        )}
 
         <section className="actions" aria-label="Acoes admin">
           <button
@@ -502,31 +683,217 @@ function App() {
         <section className="models">
           <div className="models__header">
             <h2>Modelos</h2>
-            <span className="models__count">
-              {enabledModelIds.length} ativos de {MODELS.length}
-            </span>
+            <div className="models__header-actions">
+              <span className="models__count">
+                {activeModels.length} ativos de {models.length}
+              </span>
+              <label className="models__checkbox">
+                <input
+                  type="checkbox"
+                  checked={showArchivedModels}
+                  onChange={(event) => setShowArchivedModels(event.target.checked)}
+                  disabled={busy}
+                />
+                Mostrar arquivados
+              </label>
+              <button type="button" className="btn" disabled={busy} onClick={onRefreshModels}>
+                {pending === "refresh-models" ? "Atualizando..." : "Atualizar"}
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={busy}
+                onClick={openCreateModelForm}
+              >
+                Adicionar modelo
+              </button>
+            </div>
           </div>
           <p className="muted">
-            Modelos desativados saem das proximas rodadas e ficam ocultos no leaderboard.
+            Adicione modelos, habilite/desabilite sem apagar dados e arquive quando nao quiser mais usar.
           </p>
+          {isModelFormOpen ? (
+            <>
+              {editingModelOriginalId && (
+                <p className="muted">
+                  Editando modelo: <code>{editingModelOriginalId}</code>
+                </p>
+              )}
+
+              <form className="models__form" onSubmit={onSaveModel}>
+            <label className="field-label" htmlFor="model-id">
+              Model ID
+            </label>
+            <input
+              id="model-id"
+              className="text-input"
+              value={modelId}
+              onChange={(event) => setModelId(event.target.value)}
+              placeholder="openai/gpt-5.2"
+              disabled={busy}
+              required
+            />
+
+            <label className="field-label" htmlFor="model-name">
+              Nome
+            </label>
+            <input
+              id="model-name"
+              className="text-input"
+              value={modelName}
+              onChange={(event) => setModelName(event.target.value)}
+              placeholder="GPT-5.2"
+              disabled={busy}
+              required
+            />
+
+            <label className="field-label" htmlFor="model-color">
+              Cor
+            </label>
+            <div className="models__color-field" id="model-color" role="radiogroup" aria-label="Cor do modelo">
+              <div className="models__color-palette">
+                {modelColorOptions.map((colorValue) => {
+                  const selected = normalizeHexColor(modelColor) === colorValue;
+                  return (
+                    <button
+                      key={colorValue}
+                      type="button"
+                      className={`model-color-swatch ${selected ? "model-color-swatch--selected" : ""}`}
+                      style={{ backgroundColor: colorValue }}
+                      onClick={() => setModelColor(colorValue)}
+                      disabled={busy}
+                      title={colorValue}
+                      aria-label={`Selecionar cor ${colorValue}`}
+                      aria-checked={selected}
+                      role="radio"
+                    />
+                  );
+                })}
+              </div>
+              <span className="models__color-value">{normalizeHexColor(modelColor)}</span>
+            </div>
+
+            <label className="field-label" htmlFor="model-logo">
+              Logo
+            </label>
+            <select
+              id="model-logo"
+              className="text-input"
+              value={modelLogoId}
+              onChange={(event) =>
+                setModelLogoId(event.target.value as (typeof AVAILABLE_MODEL_LOGO_IDS)[number])
+              }
+              disabled={busy}
+            >
+              {AVAILABLE_MODEL_LOGO_IDS.map((logoId) => (
+                <option key={logoId} value={logoId}>
+                  {logoId}
+                </option>
+              ))}
+            </select>
+
+            <label className="models__checkbox">
+              <input
+                type="checkbox"
+                checked={modelEnabled}
+                onChange={(event) => setModelEnabled(event.target.checked)}
+                disabled={busy}
+              />
+              Criar como ativo
+            </label>
+
+            <div className="models__form-actions">
+              <button
+                type="submit"
+                className="btn btn--primary"
+                disabled={busy || !modelId.trim() || !modelName.trim()}
+              >
+                {pending === "save-model"
+                  ? "Salvando..."
+                  : editingModelOriginalId
+                    ? "Salvar Edicao"
+                    : "Salvar Modelo"}
+              </button>
+              <button type="button" className="btn" onClick={resetModelForm} disabled={busy}>
+                Cancelar
+              </button>
+            </div>
+              </form>
+            </>
+          ) : (
+            <p className="muted">Clique em <code>Adicionar modelo</code> para abrir o formulario.</p>
+          )}
+
           <div className="models__list">
-            {MODELS.map((model) => {
-              const enabled = enabledModelsSet.has(model.id);
-              return (
-                <label className="model-row" key={model.id}>
+            {visibleModels.length === 0 ? (
+              <div className="targets__empty">
+                {models.length === 0
+                  ? "Nenhum modelo cadastrado."
+                  : "Nenhum modelo visivel com o filtro atual."}
+              </div>
+            ) : (
+              visibleModels.map((model) => {
+                const archived = Boolean(model.archivedAt);
+                return (
+                <div className="model-row" key={model.modelId}>
                   <div className="model-row__meta">
-                    <span className="model-row__name">{model.name}</span>
-                    <span className="model-row__id">{model.id}</span>
+                    <div className="model-row__name-wrap">
+                      <span className="model-row__swatch" style={{ background: model.color }} />
+                      <span className="model-row__name">{model.name}</span>
+                      <span
+                        className={`model-row__state ${archived ? "model-row__state--archived" : ""}`}
+                      >
+                        {archived ? "arquivado" : model.enabled ? "ativo" : "inativo"}
+                      </span>
+                    </div>
+                    <span className="model-row__id">{model.modelId}</span>
+                    <span className="model-row__id">
+                      logo: {model.logoId} | {formatArchivedAt(model.archivedAt)}
+                    </span>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    onChange={(event) => onToggleModel(model.id, event.target.checked)}
-                    disabled={busy}
-                  />
-                </label>
-              );
-            })}
+                  <div className="model-row__actions">
+                    {archived ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => onRestoreModel(model.modelId)}
+                      >
+                        Desarquivar
+                      </button>
+                    ) : (
+                      <>
+                        <label className="models__checkbox">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(model.enabled)}
+                            disabled={busy}
+                            onChange={(event) => onToggleModel(model.modelId, event.target.checked)}
+                          />
+                          Ativo
+                        </label>
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={busy}
+                          onClick={() => hydrateModelForm(model)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--danger"
+                          disabled={busy}
+                          onClick={() => onRemoveModel(model.modelId)}
+                        >
+                          Arquivar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )})
+            )}
           </div>
         </section>
 

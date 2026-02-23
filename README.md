@@ -94,6 +94,12 @@ bun run dev
 
 - `POST /admin/login`
 - `GET /admin/status`
+- `GET /admin/models`
+- `POST /admin/models` (cria ou restaura arquivado)
+- `POST /admin/models/update` (edita modelo existente)
+- `POST /admin/models/enable`
+- `POST /admin/models/remove` (arquiva)
+- `POST /admin/models/restore` (desarquiva)
 - `GET /admin/viewer-targets`
 - `POST /admin/viewer-targets`
 - `POST /admin/viewer-targets/delete`
