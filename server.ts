@@ -255,7 +255,7 @@ function broadcastViewerCount() {
     for (const ws of clients) {
       ws.send(msg);
     }
-  }, 1000);
+  }, 15_000);
 }
 
 function getAdminSnapshot() {
