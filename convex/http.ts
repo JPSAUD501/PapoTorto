@@ -112,6 +112,7 @@ for (const path of [
   "/admin/viewer-targets",
   "/admin/viewer-targets/delete",
   "/admin/status",
+  "/admin/models",
   "/admin/pause",
   "/admin/resume",
   "/admin/reset",
@@ -242,6 +243,43 @@ http.route({
     if (!isAuthorized(request)) {
       return text(request, "Unauthorized", 401);
     }
+    const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
+    return json(request, { ok: true, ...snapshot });
+  }),
+});
+
+http.route({
+  path: "/admin/models",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as { modelId?: string; enabled?: boolean };
+    if (typeof payload.modelId !== "string" || !payload.modelId.trim()) {
+      return text(request, "Invalid modelId", 400);
+    }
+    if (typeof payload.enabled !== "boolean") {
+      return text(request, "Invalid enabled flag", 400);
+    }
+
+    try {
+      await ctx.runMutation(convexInternal.admin.setModelEnabled, {
+        modelId: payload.modelId.trim(),
+        enabled: payload.enabled,
+      });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to update model", 400);
+    }
+
     const snapshot = await ctx.runQuery(convexInternal.admin.getSnapshot, {});
     return json(request, { ok: true, ...snapshot });
   }),

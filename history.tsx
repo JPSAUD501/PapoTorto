@@ -25,6 +25,9 @@ type RoundState = {
   _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  skipped?: boolean;
+  skipReason?: string;
+  skipType?: "prompt_error" | "answer_error";
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -167,6 +170,7 @@ function ViewerVotes({ count, label }: { count: number; label: string }) {
 
 function HistoryCard({ round }: { round: RoundState }) {
   const [contA, contB] = round.contestants;
+  const isSkipped = Boolean(round.skipped);
 
   let votesA = 0,
     votesB = 0;
@@ -183,8 +187,8 @@ function HistoryCard({ round }: { round: RoundState }) {
     }
   }
 
-  const isAWinner = votesA > votesB;
-  const isBWinner = votesB > votesA;
+  const isAWinner = !isSkipped && votesA > votesB;
+  const isBWinner = !isSkipped && votesB > votesA;
   const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
 
   return (
@@ -201,6 +205,14 @@ function HistoryCard({ round }: { round: RoundState }) {
         </div>
       </div>
 
+      {isSkipped && (
+        <div className="history-card__skipped">
+          <span className="history-card__skipped-label">Rodada pulada por falha</span>
+          <span className="history-card__skipped-reason">{round.skipReason ?? "Falha tecnica"}</span>
+        </div>
+      )}
+
+      {round.skipType !== "prompt_error" && (
       <div className="history-card__showdown">
         <div
           className={`history-contestant ${isAWinner ? "history-contestant--winner" : ""}`}
@@ -212,7 +224,7 @@ function HistoryCard({ round }: { round: RoundState }) {
             )}
           </div>
           <div className="history-contestant__answer">
-            &ldquo;{round.answerTasks[0].result}&rdquo;
+            &ldquo;{round.answerTasks[0].result ?? "Sem resposta"}&rdquo;
           </div>
           <div className="history-contestant__votes">
             <div
@@ -253,7 +265,7 @@ function HistoryCard({ round }: { round: RoundState }) {
             )}
           </div>
           <div className="history-contestant__answer">
-            &ldquo;{round.answerTasks[1].result}&rdquo;
+            &ldquo;{round.answerTasks[1].result ?? "Sem resposta"}&rdquo;
           </div>
           <div className="history-contestant__votes">
             <div
@@ -284,6 +296,7 @@ function HistoryCard({ round }: { round: RoundState }) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

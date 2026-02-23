@@ -349,7 +349,6 @@ async function main() {
   await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
 
   const captureUrl = new URL(broadcastUrl);
-  captureUrl.searchParams.set("ghost", "true");
   captureUrl.searchParams.set("sink", `http://127.0.0.1:${chunkServer.port}/chunks`);
   captureUrl.searchParams.set("captureFps", String(STREAM_FPS));
   captureUrl.searchParams.set("captureBitrate", String(CAPTURE_BITRATE));

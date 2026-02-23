@@ -4,7 +4,12 @@ import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import { PLATFORM_VIEWER_POLL_INTERVAL_MS, RUNNER_LEASE_MS } from "./constants";
 import { toClientRound } from "./rounds";
-import { getEngineState, getOrCreateEngineState, normalizeScoreRecord } from "./state";
+import {
+  getEngineState,
+  getOrCreateEngineState,
+  normalizeScoreRecord,
+  normalizeStateEnabledModelIds,
+} from "./state";
 import { readTotalViewerCount } from "./viewerCount";
 
 function getPollIntervalMs(): number {
@@ -22,9 +27,11 @@ export const getState = query({
       scores: v.record(v.string(), v.number()),
       humanScores: v.record(v.string(), v.number()),
       humanVoteTotals: v.record(v.string(), v.number()),
+      enabledModelIds: v.array(v.string()),
       done: v.boolean(),
       isPaused: v.boolean(),
       generation: v.number(),
+      completedRounds: v.number(),
     }),
     totalRounds: v.union(v.number(), v.null()),
     viewerCount: v.number(),
@@ -39,9 +46,11 @@ export const getState = query({
           scores: {},
           humanScores: {},
           humanVoteTotals: {},
+          enabledModelIds: normalizeStateEnabledModelIds(undefined),
           done: false,
           isPaused: false,
           generation: 1,
+          completedRounds: 0,
         },
         totalRounds: null,
         viewerCount: 0,
@@ -81,9 +90,11 @@ export const getState = query({
         scores: state.scores,
         humanScores: normalizeScoreRecord(state.humanScores),
         humanVoteTotals: normalizeScoreRecord(state.humanVoteTotals),
+        enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
         done: state.done,
         isPaused: state.isPaused,
         generation: state.generation,
+        completedRounds: state.completedRounds,
       },
       totalRounds: state.runsMode === "finite" ? (state.totalRounds ?? null) : null,
       viewerCount: await readTotalViewerCount(ctx),
@@ -133,11 +144,20 @@ async function ensureStartedImpl(ctx: any) {
     patch.humanScores = normalizeScoreRecord(state.humanScores);
     patch.humanVoteTotals = normalizeScoreRecord(state.humanVoteTotals);
   }
+  if (state.enabledModelIds === undefined) {
+    patch.enabledModelIds = normalizeStateEnabledModelIds(state.enabledModelIds);
+  }
 
   if (Object.keys(patch).length > 0) {
     await ctx.db.patch(state._id, {
       ...patch,
       updatedAt: now,
+    });
+  }
+
+  if (state.activeRoundId) {
+    await ctx.scheduler.runAfter(0, convexInternal.engine.recoverStaleActiveRound, {
+      expectedGeneration: state.generation,
     });
   }
 

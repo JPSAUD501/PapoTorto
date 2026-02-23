@@ -78,6 +78,10 @@ export const heartbeat = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (args.page === "broadcast") {
+      return null;
+    }
+
     const now = Date.now();
     const shard = hashToShard(args.viewerId, VIEWER_SHARD_COUNT);
     let increasedCount = false;

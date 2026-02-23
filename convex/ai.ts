@@ -4,7 +4,13 @@ import { generateText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { ALL_PROMPTS } from "../prompts";
 import type { Model } from "../shared/models";
-import { shuffle } from "./constants";
+import {
+  MODEL_ATTEMPTS,
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_RETRY_BACKOFF_MS,
+  sleep,
+  shuffle,
+} from "./constants";
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -31,10 +37,10 @@ function isRealString(s: string, minLength = 5): boolean {
 async function withRetry<T>(
   fn: () => Promise<T>,
   validate: (result: T) => boolean,
-  retries = 3,
+  attempts = MODEL_ATTEMPTS,
 ): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const result = await fn();
       if (validate(result)) return result;
@@ -42,8 +48,12 @@ async function withRetry<T>(
     } catch (err) {
       lastErr = err;
     }
-    if (attempt < retries) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    if (attempt < attempts - 1) {
+      const backoffMs =
+        MODEL_RETRY_BACKOFF_MS[Math.min(attempt, MODEL_RETRY_BACKOFF_MS.length - 1)] ?? 0;
+      if (backoffMs > 0) {
+        await sleep(backoffMs);
+      }
     }
   }
   throw lastErr;
@@ -51,9 +61,9 @@ async function withRetry<T>(
 
 function buildPromptSystem(): string {
   const examples = shuffle([...ALL_PROMPTS]).slice(0, 80);
-  return `You are a comedy writer for the game Quiplash. Generate a single funny fill-in-the-blank prompt that players will try to answer. The prompt should be surprising and designed to elicit hilarious responses. Return ONLY the prompt text, nothing else. Keep it short (under 15 words).\n\nUse a wide VARIETY of prompt formats. Do NOT always use "The worst thing to..." - mix it up! Here are examples of the range of styles:\n\n${examples
+  return `Voce e roteirista de comedia para o jogo Quiplash. Gere um unico prompt engracado de preencher lacuna que os jogadores vao tentar responder. O prompt deve ser surpreendente e pensado para render respostas hilarias. Retorne APENAS o texto do prompt, nada alem disso. Mantenha curto (menos de 15 palavras).\n\nUse uma grande VARIEDADE de formatos de prompt. NAO use sempre "A pior coisa para..." - varie bastante! Aqui vao exemplos da faixa de estilos:\n\n${examples
     .map((p) => `- ${p}`)
-    .join("\n")}\n\nCome up with something ORIGINAL - don't copy these examples.`;
+    .join("\n")}\n\nCrie algo ORIGINAL - nao copie estes exemplos.`;
 }
 
 export async function callGeneratePrompt(model: Model): Promise<string> {
@@ -63,12 +73,14 @@ export async function callGeneratePrompt(model: Model): Promise<string> {
         model: openrouter.chat(model.id),
         system: buildPromptSystem(),
         prompt:
-          "Generate a single original Quiplash prompt. Be creative and don't repeat common patterns.",
+          "Gere um unico prompt original de Quiplash. Seja criativo e nao repita padroes comuns.",
+        timeout: MODEL_CALL_TIMEOUT_MS,
+        maxRetries: 0,
       });
       return cleanResponse(text);
     },
     (s) => isRealString(s, 10),
-    3,
+    MODEL_ATTEMPTS,
   );
 }
 
@@ -80,11 +92,13 @@ export async function callGenerateAnswer(model: Model, prompt: string): Promise<
         system:
           "You are playing Quiplash! You'll be given a fill-in-the-blank prompt. Give the FUNNIEST possible answer. Be creative, edgy, unexpected, and concise. Reply with ONLY your answer - no quotes, no explanation, no preamble. Keep it short (under 12 words).",
         prompt: `Fill in the blank: ${prompt}`,
+        timeout: MODEL_CALL_TIMEOUT_MS,
+        maxRetries: 0,
       });
       return cleanResponse(text);
     },
     (s) => isRealString(s, 3),
-    3,
+    1,
   );
 }
 
@@ -101,6 +115,8 @@ export async function callVote(
         system:
           "You are a judge in a comedy game. You'll see a fill-in-the-blank prompt and two answers. Pick which answer is FUNNIER. You MUST respond with exactly \"A\" or \"B\".",
         prompt: `Prompt: \"${prompt}\"\n\nAnswer A: \"${a.answer}\"\nAnswer B: \"${b.answer}\"\n\nWhich is funnier? Reply with just A or B.`,
+        timeout: MODEL_CALL_TIMEOUT_MS,
+        maxRetries: 0,
       });
 
       const cleaned = text.trim().toUpperCase();
@@ -110,6 +126,6 @@ export async function callVote(
       return cleaned.startsWith("A") ? "A" : "B";
     },
     (v) => v === "A" || v === "B",
-    3,
+    MODEL_ATTEMPTS,
   );
 }

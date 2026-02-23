@@ -6,10 +6,10 @@ import { join } from "node:path";
 // ── Models ──────────────────────────────────────────────────────────────────
 
 export const MODELS = [
-  { id: "google/gemini-3-flash", name: "Gemini 3 Flash" },
-  { id: "moonshotai/kimi-k2", name: "Kimi K2" },
+  { id: "google/gemini-3-flash-preview", name: "Gemini 3 Flash" },
+  { id: "moonshotai/kimi-k2-0905", name: "Kimi K2" },
   { id: "deepseek/deepseek-v3.2", name: "DeepSeek 3.2" },
-  { id: "qwen/qwen3.5-plus-02-15", name: "Qwen 3.5 Plus" },
+  { id: "minimax/minimax-m2.5", name: "MiniMax 2.5" },
   { id: "z-ai/glm-5", name: "GLM-5" },
   { id: "openai/gpt-5.2", name: "GPT-5.2" },
   { id: "anthropic/claude-sonnet-4.6", name: "Sonnet 4.6" },

@@ -1,6 +1,7 @@
 import { ConvexClient } from "convex/browser";
 import { api } from "./convex/_generated/api";
 import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
+import { MODELS } from "./shared/models";
 
 type Model = { id: string; name: string };
 type TaskInfo = {
@@ -21,6 +22,9 @@ type RoundState = {
   _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  skipped?: boolean;
+  skipReason?: string;
+  skipType?: "prompt_error" | "answer_error";
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -39,9 +43,11 @@ type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
   generation: number;
+  completedRounds: number;
 };
 type StateMessage = {
   type: "state";
@@ -70,6 +76,10 @@ const MODEL_COLORS: Record<string, string> = {
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
+const ROUND_STATUS_BOX_W = 300;
+const ROUND_STATUS_BOX_Y = 150;
+const ROUND_STATUS_BOX_RIGHT_PADDING = 64;
+const ROUND_STATUS_PROMPT_RESERVE = 0;
 
 const canvas = document.getElementById("broadcast-canvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("broadcast-status") as HTMLDivElement;
@@ -90,7 +100,6 @@ const convex = new ConvexClient(getConvexUrl());
 const convexApi = api as any;
 const countdownTracker = createVotingCountdownTracker();
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
-let heartbeatTimer: number | null = null;
 
 function getColor(name: string): string {
   return MODEL_COLORS[name] ?? "#aeb6d6";
@@ -136,18 +145,15 @@ function getConvexUrl(): string {
   return url.replace(/\/$/, "");
 }
 
-function getOrCreateViewerId(): string {
-  const key = "papotorto.viewerId";
-  const existing = window.localStorage.getItem(key);
-  if (existing) return existing;
-  const generated = crypto.randomUUID();
-  window.localStorage.setItem(key, generated);
-  return generated;
-}
+const MODEL_NAME_BY_ID = new Map<string, string>(
+  MODELS.map((model) => [model.id, model.name]),
+);
 
-function isGhostViewer(): boolean {
-  const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
+function getEnabledModelNames(enabledModelIds: string[]): string[] {
+  const names = enabledModelIds
+    .map((id) => MODEL_NAME_BY_ID.get(id))
+    .filter((name): name is string => Boolean(name));
+  return names.length > 0 ? names : MODELS.map((model) => model.name);
 }
 
 type RankingEntry = {
@@ -166,10 +172,18 @@ function collectRankingNames(...records: Record<string, number>[]): string[] {
   return [...names];
 }
 
+function namesAsScoreRecord(names: string[]): Record<string, number> {
+  return names.reduce<Record<string, number>>((acc, name) => {
+    acc[name] = 0;
+    return acc;
+  }, {});
+}
+
 function rankByScore(
   scores: Record<string, number>,
   tieTotals: Record<string, number>,
   fallbackNames: string[],
+  allowedNames?: Set<string>,
 ): RankingEntry[] {
   const names = new Set<string>([
     ...fallbackNames,
@@ -177,6 +191,7 @@ function rankByScore(
     ...Object.keys(tieTotals),
   ]);
   return [...names]
+    .filter((name) => !allowedNames || allowedNames.has(name))
     .map((name) => ({
       name,
       score: scores[name] ?? 0,
@@ -190,22 +205,7 @@ function rankByScore(
 }
 
 function setupRealtime() {
-  const ghostViewer = isGhostViewer();
-  const viewerId = getOrCreateViewerId();
   void convex.mutation(convexApi.live.ensureStarted, {});
-
-  if (!ghostViewer) {
-    void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
-  }
-
-  if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
-  if (!ghostViewer) {
-    heartbeatTimer = window.setInterval(() => {
-      void convex.mutation(convexApi.viewers.heartbeat, { viewerId, page: "broadcast" });
-    }, 10_000);
-  } else {
-    heartbeatTimer = null;
-  }
 
   liveUnsubscribe?.unsubscribe();
   liveUnsubscribe = convex.onUpdate(
@@ -216,17 +216,17 @@ function setupRealtime() {
       state = payload.data;
       totalRounds = payload.totalRounds;
       viewerCount = payload.viewerCount;
-      setStatus("Convex conectado");
     },
     () => {
       connected = false;
-      setStatus("Convex desconectado");
     },
   );
 }
 
 function setStatus(value: string) {
-  statusEl.textContent = value;
+  const text = value.trim();
+  statusEl.textContent = text;
+  statusEl.style.display = text ? "block" : "none";
 }
 
 function roundRect(
@@ -249,6 +249,31 @@ function roundRect(
   p.quadraticCurveTo(x, y, x + r, y);
   ctx.fillStyle = fillStyle;
   ctx.fill(p);
+}
+
+type SkipReasonView = {
+  modelName: string | null;
+  message: string;
+};
+
+function parseSkipReason(skipReason?: string): SkipReasonView {
+  const raw = (skipReason ?? "").trim();
+  if (!raw) {
+    return { modelName: null, message: "Falha tecnica" };
+  }
+
+  const separatorIndex = raw.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex >= raw.length - 1) {
+    return { modelName: null, message: raw };
+  }
+
+  const modelName = raw.slice(0, separatorIndex).trim();
+  const message = raw.slice(separatorIndex + 1).trim();
+  if (!modelName || !message) {
+    return { modelName: null, message: raw };
+  }
+
+  return { modelName, message };
 }
 
 function textLines(
@@ -416,10 +441,17 @@ function drawScoreboard(
   scores: Record<string, number>,
   humanScores: Record<string, number>,
   humanVoteTotals: Record<string, number>,
+  enabledModelNames: string[],
 ) {
-  const names = collectRankingNames(scores, humanScores, humanVoteTotals);
-  const humanEntries = rankByScore(humanScores, humanVoteTotals, names);
-  const iaEntries = rankByScore(scores, {}, names);
+  const allowedModelNames = new Set(enabledModelNames);
+  const names = collectRankingNames(
+    scores,
+    humanScores,
+    humanVoteTotals,
+    namesAsScoreRecord(enabledModelNames),
+  );
+  const humanEntries = rankByScore(humanScores, humanVoteTotals, names, allowedModelNames);
+  const iaEntries = rankByScore(scores, {}, names, allowedModelNames);
   const maxHuman = humanEntries[0]?.score || 1;
   const maxIa = iaEntries[0]?.score || 1;
 
@@ -430,66 +462,53 @@ function drawScoreboard(
   drawRankingSection("RANKING PLATEIA", humanEntries, maxHuman, 70, "👥");
   drawRankingSection("RANKING IA", iaEntries, maxIa, 520, "👑");
 }
-function drawVotingCountdownWidget(countdown: VotingCountdownView, mainW: number) {
-  const boxW = 332;
-  const boxH = 66;
-  const x = mainW - 64 - boxW;
-  const y = 170;
-
-  roundRect(x, y, boxW, boxH, 10, "rgba(255,255,255,0.03)");
-  ctx.strokeStyle = "#1c1c1c";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, boxW - 1, boxH - 1);
-
-  ctx.font = '600 14px "JetBrains Mono", monospace';
-  ctx.fillStyle = "#888";
-  ctx.fillText(countdown.label.toUpperCase(), x + 14, y + 25);
-
-  ctx.font = '700 28px "JetBrains Mono", monospace';
+function drawVotingCountdownWidget(
+  countdown: VotingCountdownView,
+  x: number,
+  y: number,
+  boxW: number,
+) {
+  ctx.font = '700 36px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const timeWidth = ctx.measureText(countdown.display).width;
-  ctx.fillText(countdown.display, x + boxW - 14 - timeWidth, y + 32);
-
-  const barX = x + 14;
-  const barY = y + boxH - 16;
-  const barW = boxW - 28;
-  const barH = 6;
-  roundRect(barX, barY, barW, barH, 3, "#1c1c1c");
-  roundRect(
-    barX,
-    barY,
-    Math.round(barW * countdown.progress),
-    barH,
-    3,
-    countdown.isZero ? "#555" : "#D97757",
-  );
+  ctx.fillText(countdown.display, x + boxW - timeWidth, y);
 }
 
-function drawRound(round: RoundState) {
+function drawRound(round: RoundState, roundNumber: number) {
   const mainW = WIDTH - 380;
   const countdown = countdownTracker.compute(round, Date.now());
+  const isSkipped = Boolean(round.skipped);
+  const skipInfo = isSkipped ? parseSkipReason(round.skipReason) : null;
+  const showCountdownWidget = !isSkipped && round.phase === "voting" && Boolean(countdown);
+  const phaseRightX = mainW - 64;
+  const statusX = phaseRightX - ROUND_STATUS_BOX_W;
+  const statusY = ROUND_STATUS_BOX_Y;
 
   const phaseLabel =
-    (round.phase === "prompting"
+    (isSkipped
+      ? `Rodada pulada${skipInfo?.modelName ? ` - ${skipInfo.modelName}` : ""}`
+      : round.phase === "prompting"
       ? "Escrevendo prompt"
       : round.phase === "answering"
         ? "Respondendo"
         : round.phase === "voting"
-          ? "Jurados votando"
+          ? ""
           : "Concluida"
     ).toUpperCase();
 
   ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
   const totalText = totalRounds !== null ? `/${totalRounds}` : "";
-  ctx.fillText(`Rodada ${round.num}${totalText}`, 64, 150);
+  ctx.fillText(`Rodada ${roundNumber}${totalText}`, 64, 150);
 
-  ctx.fillStyle = "#888";
-  const labelWidth = ctx.measureText(phaseLabel).width;
-  ctx.fillText(phaseLabel, mainW - 64 - labelWidth, 150);
+  if (phaseLabel) {
+    ctx.fillStyle = "#888";
+    const labelWidth = ctx.measureText(phaseLabel).width;
+    ctx.fillText(phaseLabel, phaseRightX - labelWidth, 150);
+  }
 
-  if (round.phase === "voting" && countdown) {
-    drawVotingCountdownWidget(countdown, mainW);
+  if (showCountdownWidget && countdown) {
+    drawVotingCountdownWidget(countdown, statusX, statusY, ROUND_STATUS_BOX_W);
   }
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
@@ -509,12 +528,17 @@ function drawRound(round: RoundState) {
 
   const promptText =
     round.prompt ??
-    (round.phase === "prompting" ? "Gerando prompt..." : "Prompt indisponivel");
+    (round.promptTask.error
+      ? "Falha ao gerar prompt"
+      : round.phase === "prompting"
+        ? "Gerando prompt..."
+        : "Prompt indisponivel");
 
   const promptFont = '400 56px "DM Serif Display", serif';
   const promptLineHeight = 72;
   const promptMaxLines = 3;
-  const promptMaxWidth = mainW - 120;
+  const reserveRightForStatus = showCountdownWidget ? ROUND_STATUS_PROMPT_RESERVE : 0;
+  const promptMaxWidth = Math.max(560, mainW - 120 - reserveRightForStatus);
   const promptLines = textLines(promptText, promptMaxWidth, promptFont, promptMaxLines);
   const promptTextHeight = promptLines.length * promptLineHeight;
   const promptBaselineY = 262;
@@ -534,7 +558,7 @@ function drawRound(round: RoundState) {
     promptMaxLines,
   );
 
-  if (round.phase !== "prompting") {
+  if (round.phase !== "prompting" && round.skipType !== "prompt_error") {
     const [taskA, taskB] = round.answerTasks;
     const cardW = (mainW - 160) / 2;
     const cardY = promptBarY + promptTextHeight + 6 + 32;
@@ -563,7 +587,7 @@ function drawContestantCard(
   }
   const isFirst = round.answerTasks[0].model.name === task.model.name;
   const voteCount = isFirst ? votesA : votesB;
-  const isWinner = round.phase === "done" && voteCount > (isFirst ? votesB : votesA);
+  const isWinner = !round.skipped && round.phase === "done" && voteCount > (isFirst ? votesB : votesA);
   
   const color = getColor(task.model.name);
   
@@ -610,7 +634,7 @@ function drawContestantCard(
     6,
   );
 
-  const showVotes = round.phase === "voting" || round.phase === "done";
+  const showVotes = !round.skipped && (round.phase === "voting" || round.phase === "done");
   if (showVotes) {
     const totalVotes = votesA + votesB;
     const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
@@ -697,11 +721,20 @@ function drawDone(
   scores: Record<string, number>,
   humanScores: Record<string, number>,
   humanVoteTotals: Record<string, number>,
+  enabledModelNames: string[],
 ) {
   const mainW = WIDTH - 380;
-  const names = collectRankingNames(scores, humanScores, humanVoteTotals);
-  const iaChampion = rankByScore(scores, {}, names)[0];
-  const humanChampion = rankByScore(humanScores, humanVoteTotals, names).find((entry) => entry.score > 0);
+  const allowedModelNames = new Set(enabledModelNames);
+  const names = collectRankingNames(
+    scores,
+    humanScores,
+    humanVoteTotals,
+    namesAsScoreRecord(enabledModelNames),
+  );
+  const iaChampion = rankByScore(scores, {}, names, allowedModelNames)[0];
+  const humanChampion = rankByScore(humanScores, humanVoteTotals, names, allowedModelNames).find(
+    (entry) => entry.score > 0,
+  );
 
   ctx.font = '700 20px "JetBrains Mono", monospace';
   ctx.fillStyle = "#444";
@@ -741,17 +774,77 @@ function drawDone(
     ctx.fillText(none, (mainW - noneW) / 2, HEIGHT / 2 + 112);
   }
 }
+
+function drawNextPromptNotice(prompter: Model, reserveRightPx = 0) {
+  const mainW = WIDTH - 380;
+  const rightPadding = 64;
+  const y = 72;
+  const maxX = mainW - rightPadding - Math.max(0, reserveRightPx);
+  const minX = 300; // Keep clear of the brand at top-left.
+
+  const baseSuffix = "esta escrevendo o proximo prompt";
+  const modelLabel = prompter.name;
+
+  ctx.font = '600 16px "JetBrains Mono", monospace';
+  let suffix = baseSuffix;
+  const maxSuffixWidth = 460;
+  const dotSlot = "...";
+  const dotSlotW = ctx.measureText(dotSlot).width;
+  const maxBaseWidth = Math.max(120, maxSuffixWidth - dotSlotW);
+  while (suffix.length > 3 && ctx.measureText(suffix).width > maxBaseWidth) {
+    suffix = suffix.slice(0, -1);
+  }
+  if (suffix !== baseSuffix) suffix = `${suffix.slice(0, -3)}...`;
+
+  ctx.font = '700 18px "Inter", sans-serif';
+  const modelW = ctx.measureText(modelLabel).width;
+  ctx.font = '600 16px "JetBrains Mono", monospace';
+  const suffixW = ctx.measureText(suffix).width;
+  const logoSize = 16;
+  const gap = 8;
+  const totalW = logoSize + gap + modelW + gap + suffixW + dotSlotW;
+  if (maxX <= minX + 40) {
+    return;
+  }
+
+  const startX = Math.max(minX, maxX - totalW);
+  let cursorX = startX;
+
+  if (drawModelLogo(prompter.name, cursorX, y - 14, logoSize)) {
+    cursorX += logoSize + gap;
+  }
+
+  ctx.font = '700 18px "Inter", sans-serif';
+  ctx.fillStyle = getColor(modelLabel);
+  ctx.fillText(modelLabel, cursorX, y + 2);
+  cursorX += modelW + gap;
+
+  ctx.font = '600 16px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#888";
+  ctx.fillText(suffix, cursorX, y + 2);
+  cursorX += suffixW;
+
+  const activeDots = (Math.floor(Date.now() / 400) % 3) + 1;
+  const dotStep = dotSlotW / 3;
+  for (let i = 0; i < 3; i += 1) {
+    ctx.fillStyle = i < activeDots ? "#888" : "#2f2f2f";
+    ctx.fillText(".", cursorX + i * dotStep, y + 2);
+  }
+}
+
 function draw() {
   drawHeader();
   if (!state) {
     drawWaiting();
       return;
   }
+  const enabledModelNames = getEnabledModelNames(state.enabledModelIds ?? []);
 
   drawScoreboard(
     state.scores ?? {},
     state.humanScores ?? {},
     state.humanVoteTotals ?? {},
+    enabledModelNames,
   );
   
   const isNextPrompting = state.active?.phase === "prompting" && !state.active.prompt;
@@ -762,9 +855,14 @@ function draw() {
       state.scores ?? {},
       state.humanScores ?? {},
       state.humanVoteTotals ?? {},
+      enabledModelNames,
     );
   } else if (displayRound) {
-    drawRound(displayRound);
+    drawRound(displayRound, state.completedRounds ?? 0);
+    if (isNextPrompting && state.lastCompleted && state.active) {
+      const reserveRightPx = displayRound.skipped ? ROUND_STATUS_PROMPT_RESERVE : 0;
+      drawNextPromptNotice(state.active.prompter, reserveRightPx);
+    }
   } else {
     drawWaiting();
   }
@@ -844,7 +942,6 @@ renderLoop();
 
 window.addEventListener("beforeunload", () => {
   liveUnsubscribe?.unsubscribe();
-  if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
   void convex.close();
 });
 

@@ -3,7 +3,13 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import { DEFAULT_SCORES, PLATFORM_VIEWER_POLL_INTERVAL_MS } from "./constants";
-import { getEngineState, getOrCreateEngineState, normalizeScoreRecord } from "./state";
+import { MODELS } from "../shared/models";
+import {
+  getEngineState,
+  getOrCreateEngineState,
+  normalizeScoreRecord,
+  normalizeStateEnabledModelIds,
+} from "./state";
 import { toClientRound } from "./rounds";
 import { readTotalViewerCount } from "./viewerCount";
 
@@ -35,6 +41,7 @@ export const getSnapshot = internalQuery({
     completedInMemory: v.number(),
     persistedRounds: v.number(),
     viewerCount: v.number(),
+    enabledModelIds: v.array(v.string()),
   }),
   handler: async (ctx) => {
     const state = await getEngineState(ctx as any);
@@ -46,6 +53,7 @@ export const getSnapshot = internalQuery({
         completedInMemory: 0,
         persistedRounds: 0,
         viewerCount: 0,
+        enabledModelIds: MODELS.map((model) => model.id),
       };
     }
 
@@ -63,6 +71,7 @@ export const getSnapshot = internalQuery({
       completedInMemory: state.completedRounds,
       persistedRounds: doneRounds.length,
       viewerCount: await readTotalViewerCount(ctx),
+      enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
     };
   },
 });
@@ -197,6 +206,43 @@ export const resume = internalMutation({
   },
 });
 
+export const setModelEnabled = internalMutation({
+  args: {
+    modelId: v.string(),
+    enabled: v.boolean(),
+  },
+  returns: v.object({
+    enabledModelIds: v.array(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const state = await getOrCreateEngineState(ctx as any);
+    const knownModelIds = new Set(MODELS.map((model) => model.id));
+    if (!knownModelIds.has(args.modelId)) {
+      throw new Error("Modelo invalido.");
+    }
+    const modelId = args.modelId as (typeof MODELS)[number]["id"];
+
+    const nextEnabled = new Set(normalizeStateEnabledModelIds(state.enabledModelIds));
+    if (args.enabled) {
+      nextEnabled.add(modelId);
+    } else {
+      nextEnabled.delete(modelId);
+    }
+
+    const ordered = MODELS.map((model) => model.id).filter((id) => nextEnabled.has(id));
+    if (ordered.length < 3) {
+      throw new Error("Mantenha pelo menos 3 modelos ativos.");
+    }
+
+    await ctx.db.patch(state._id, {
+      enabledModelIds: ordered,
+      updatedAt: Date.now(),
+    });
+
+    return { enabledModelIds: ordered };
+  },
+});
+
 export const reset = internalMutation({
   args: {},
   returns: v.object({ generation: v.number() }),
@@ -216,6 +262,7 @@ export const reset = internalMutation({
       scores: { ...DEFAULT_SCORES },
       humanScores: { ...DEFAULT_SCORES },
       humanVoteTotals: { ...DEFAULT_SCORES },
+      enabledModelIds: normalizeStateEnabledModelIds(state.enabledModelIds),
       runnerLeaseId: undefined,
       runnerLeaseUntil: undefined,
       reaperScheduledAt: undefined,

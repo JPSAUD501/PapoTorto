@@ -7,8 +7,17 @@ export const VIEWER_REAPER_BATCH = 500;
 export const VIEWER_VOTE_WINDOW_ACTIVE_MS = 30_000;
 export const VIEWER_VOTE_WINDOW_IDLE_MS = 120_000;
 export const POST_ROUND_DELAY_MS = 5_000;
+export const SKIPPED_ROUND_DELAY_MS = 10_000;
 export const RUNNER_LEASE_MS = 60_000;
+export const RUNNER_LEASE_HEARTBEAT_MS = 20_000;
 export const PLATFORM_VIEWER_POLL_INTERVAL_MS = 10_000;
+export const MODEL_CALL_TIMEOUT_MS = 45_000;
+export const MODEL_ATTEMPTS = 3;
+export const MODEL_RETRY_BACKOFF_MS = [1_000, 2_000] as const;
+export const MODEL_TIMEOUT_GRACE_MS = 15_000;
+export const MODEL_PHASE_DEADLINE_MS =
+  MODEL_ATTEMPTS * MODEL_CALL_TIMEOUT_MS +
+  MODEL_RETRY_BACKOFF_MS.reduce((sum, ms) => sum + ms, 0);
 
 export const DEFAULT_SCORES = Object.fromEntries(MODELS.map((m) => [m.name, 0]));
 

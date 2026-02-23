@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
+import { MODELS } from "./shared/models";
 import "./frontend.css";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -26,6 +27,9 @@ type RoundState = {
   _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  skipped?: boolean;
+  skipReason?: string;
+  skipType?: "prompt_error" | "answer_error";
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -44,9 +48,11 @@ type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
   generation: number;
+  completedRounds: number;
 };
 type StateMessage = {
   type: "state";
@@ -110,6 +116,17 @@ function getOrCreateViewerId(): string {
   return generated;
 }
 
+const MODEL_NAME_BY_ID = new Map<string, string>(
+  MODELS.map((model) => [model.id, model.name]),
+);
+
+function getEnabledModelNames(enabledModelIds: string[]): string[] {
+  const names = enabledModelIds
+    .map((id) => MODEL_NAME_BY_ID.get(id))
+    .filter((name): name is string => Boolean(name));
+  return names.length > 0 ? names : MODELS.map((model) => model.name);
+}
+
 function isGhostViewer(): boolean {
   const value = (new URLSearchParams(window.location.search).get("ghost") ?? "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
@@ -131,10 +148,18 @@ function collectRankingNames(...records: Record<string, number>[]): string[] {
   return [...names];
 }
 
+function namesAsScoreRecord(names: string[]): Record<string, number> {
+  return names.reduce<Record<string, number>>((acc, name) => {
+    acc[name] = 0;
+    return acc;
+  }, {});
+}
+
 function rankByScore(
   scores: Record<string, number>,
   tieTotals: Record<string, number>,
   fallbackNames: string[],
+  allowedNames?: Set<string>,
 ): RankingEntry[] {
   const names = new Set<string>([
     ...fallbackNames,
@@ -142,6 +167,7 @@ function rankByScore(
     ...Object.keys(tieTotals),
   ]);
   return [...names]
+    .filter((name) => !allowedNames || allowedNames.has(name))
     .map((name) => ({
       name,
       score: scores[name] ?? 0,
@@ -152,6 +178,31 @@ function rankByScore(
       if (b.tieTotal !== a.tieTotal) return b.tieTotal - a.tieTotal;
       return a.name.localeCompare(b.name);
     });
+}
+
+type SkipReasonView = {
+  modelName: string | null;
+  message: string;
+};
+
+function parseSkipReason(skipReason?: string): SkipReasonView {
+  const raw = (skipReason ?? "").trim();
+  if (!raw) {
+    return { modelName: null, message: "Falha tecnica" };
+  }
+
+  const separatorIndex = raw.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex >= raw.length - 1) {
+    return { modelName: null, message: raw };
+  }
+
+  const modelName = raw.slice(0, separatorIndex).trim();
+  const message = raw.slice(separatorIndex + 1).trim();
+  if (!modelName || !message) {
+    return { modelName: null, message: raw };
+  }
+
+  return { modelName, message };
 }
 
 const convex = new ConvexReactClient(getConvexUrl());
@@ -349,15 +400,18 @@ function ContestantCard({
 
 function Arena({
   round,
+  roundNumber,
   total,
   votingCountdown,
 }: {
   round: RoundState;
+  roundNumber: number;
   total: number | null;
   votingCountdown: VotingCountdownView | null;
 }) {
   const [contA, contB] = round.contestants;
-  const showVotes = round.phase === "voting" || round.phase === "done";
+  const isSkipped = Boolean(round.skipped);
+  const showVotes = !isSkipped && (round.phase === "voting" || round.phase === "done");
   const isDone = round.phase === "done";
 
   let votesA = 0,
@@ -372,42 +426,39 @@ function Arena({
   const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
 
   const showCountdown = round.phase === "voting" && Boolean(votingCountdown);
+  const skipInfo = isSkipped ? parseSkipReason(round.skipReason) : null;
 
   const phaseText =
-    round.phase === "prompting"
+    isSkipped
+      ? `Rodada pulada${skipInfo?.modelName ? ` - ${skipInfo.modelName}` : ""}`
+      : round.phase === "prompting"
       ? "Escrevendo prompt"
       : round.phase === "answering"
         ? "Respondendo"
         : round.phase === "voting"
-          ? "Jurados votando"
+          ? ""
           : "Concluida";
 
   return (
     <div className="arena">
       <div className="arena__meta">
         <span className="arena__round">
-          Rodada {round.num}
+          Rodada {roundNumber}
           {total ? <span className="dim">/{total}</span> : null}
         </span>
-        <span className="arena__phase">
-          {phaseText}
-        </span>
+        <div className="arena__meta-right">
+          <span className={`arena__phase ${showCountdown ? "arena__phase--timer" : ""}`}>
+            {showCountdown && votingCountdown ? (
+              <span className="arena__phase-time">{votingCountdown.display}</span>
+            ) : (
+              phaseText
+            )}
+          </span>
+
+        </div>
       </div>
 
-      {showCountdown && votingCountdown && (
-        <div className={`voting-countdown ${votingCountdown.isZero ? "voting-countdown--zero" : ""}`}>
-          <div className="voting-countdown__top">
-            <span className="voting-countdown__label">{votingCountdown.label}</span>
-            <span className="voting-countdown__time">{votingCountdown.display}</span>
-          </div>
-          <div className="voting-countdown__bar">
-            <div
-              className="voting-countdown__fill"
-              style={{ width: `${Math.round(votingCountdown.progress * 100)}%` }}
-            />
-          </div>
-        </div>
-      )}
+      {/* Countdown and skip notice stay attached to header meta-right, not floating in content */}
 
       <PromptCard round={round} />
 
@@ -417,13 +468,13 @@ function Arena({
         </div>
       )}
 
-      {round.phase !== "prompting" && (
+      {round.phase !== "prompting" && round.skipType !== "prompt_error" && (
         <div className="showdown">
           <ContestantCard
             task={round.answerTasks[0]}
             voteCount={votesA}
             totalVotes={totalVotes}
-            isWinner={isDone && votesA > votesB}
+            isWinner={isDone && !isSkipped && votesA > votesB}
             showVotes={showVotes}
             voters={votersA}
             viewerVotes={round.viewerVotesA}
@@ -433,7 +484,7 @@ function Arena({
             task={round.answerTasks[1]}
             voteCount={votesB}
             totalVotes={totalVotes}
-            isWinner={isDone && votesB > votesA}
+            isWinner={isDone && !isSkipped && votesB > votesA}
             showVotes={showVotes}
             voters={votersB}
             viewerVotes={round.viewerVotesB}
@@ -442,7 +493,7 @@ function Arena({
         </div>
       )}
 
-      {isDone && votesA === votesB && totalVotes > 0 && (
+      {isDone && !isSkipped && votesA === votesB && totalVotes > 0 && (
         <div className="tie-label">Empate</div>
       )}
     </div>
@@ -455,14 +506,22 @@ function GameOver({
   scores,
   humanScores,
   humanVoteTotals,
+  enabledModelNames,
 }: {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  enabledModelNames: string[];
 }) {
-  const modelNames = collectRankingNames(scores, humanScores, humanVoteTotals);
-  const iaChampion = rankByScore(scores, {}, modelNames)[0];
-  const humanChampion = rankByScore(humanScores, humanVoteTotals, modelNames).find(
+  const allowedModelNames = new Set(enabledModelNames);
+  const modelNames = collectRankingNames(
+    scores,
+    humanScores,
+    humanVoteTotals,
+    namesAsScoreRecord(enabledModelNames),
+  );
+  const iaChampion = rankByScore(scores, {}, modelNames, allowedModelNames)[0];
+  const humanChampion = rankByScore(humanScores, humanVoteTotals, modelNames, allowedModelNames).find(
     (entry) => entry.score > 0,
   );
 
@@ -513,15 +572,23 @@ function Standings({
   humanScores,
   humanVoteTotals,
   activeRound,
+  enabledModelNames,
 }: {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
   activeRound: RoundState | null;
+  enabledModelNames: string[];
 }) {
-  const modelNames = collectRankingNames(scores, humanScores, humanVoteTotals);
-  const iaSorted = rankByScore(scores, {}, modelNames);
-  const humanSorted = rankByScore(humanScores, humanVoteTotals, modelNames);
+  const allowedModelNames = new Set(enabledModelNames);
+  const modelNames = collectRankingNames(
+    scores,
+    humanScores,
+    humanVoteTotals,
+    namesAsScoreRecord(enabledModelNames),
+  );
+  const iaSorted = rankByScore(scores, {}, modelNames, allowedModelNames);
+  const humanSorted = rankByScore(humanScores, humanVoteTotals, modelNames, allowedModelNames);
   const maxIaScore = iaSorted[0]?.score || 1;
   const maxHumanScore = humanSorted[0]?.score || 1;
 
@@ -535,7 +602,7 @@ function Standings({
   return (
     <aside className="standings">
       <div className="standings__head">
-        <span className="standings__title">Classificacao</span>
+        <span className="standings__title">Ranking</span>
         <div className="standings__links">
           <a href="/history.html" className="standings__link">
             Historico
@@ -642,6 +709,11 @@ function App() {
   const state = liveState?.data ?? null;
   const totalRounds = liveState?.totalRounds ?? null;
   const viewerCount = liveState?.viewerCount ?? 0;
+  const completedRounds = state?.completedRounds ?? 0;
+  const enabledModelNames = React.useMemo(
+    () => getEnabledModelNames(state?.enabledModelIds ?? []),
+    [state?.enabledModelIds],
+  );
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -675,7 +747,9 @@ function App() {
   const isNextPrompting =
     state.active?.phase === "prompting" && !state.active.prompt;
   const displayRound =
-    isNextPrompting && state.lastCompleted ? state.lastCompleted : state.active;
+    isNextPrompting && state.lastCompleted
+      ? state.lastCompleted
+      : (state.active ?? state.lastCompleted ?? null);
 
   return (
     <div className="app">
@@ -706,10 +780,12 @@ function App() {
               scores={state.scores}
               humanScores={state.humanScores ?? {}}
               humanVoteTotals={state.humanVoteTotals ?? {}}
+              enabledModelNames={enabledModelNames}
             />
           ) : displayRound ? (
             <Arena
               round={displayRound}
+              roundNumber={completedRounds}
               total={totalRounds}
               votingCountdown={votingCountdown}
             />
@@ -734,6 +810,7 @@ function App() {
           humanScores={state.humanScores ?? {}}
           humanVoteTotals={state.humanVoteTotals ?? {}}
           activeRound={state.active}
+          enabledModelNames={enabledModelNames}
         />
       </div>
     </div>

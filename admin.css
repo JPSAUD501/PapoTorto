@@ -228,6 +228,66 @@ body {
   gap: 12px;
 }
 
+.models {
+  margin-top: 28px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  display: grid;
+  gap: 12px;
+}
+
+.models h2 {
+  font-family: var(--serif);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.models__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.models__count {
+  font-family: var(--mono);
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.models__list {
+  display: grid;
+  gap: 8px;
+}
+
+.model-row {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-row__meta {
+  min-width: 0;
+  display: grid;
+}
+
+.model-row__name {
+  font-weight: 600;
+}
+
+.model-row__id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .targets {
   margin-top: 28px;
   border-top: 1px solid var(--border);

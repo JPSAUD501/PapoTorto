@@ -9,7 +9,7 @@ Sem SQLite, sem Postgres, sem WebSocket manual e sem Railway.
 
 - `web`: app Vite (live, history, admin, broadcast canvas)
 - `convex`: engine do jogo, storage, realtime, HTTP actions admin e voto Fossabot
-- `stream-worker`: abre `/broadcast.html?ghost=true`, captura canvas e envia RTMP
+- `stream-worker`: abre `/broadcast.html`, captura canvas e envia RTMP
 
 ## Requisitos
 
@@ -119,7 +119,8 @@ Guia completo: `README.fossabot.md`
 
 Contagem exibida:
 
-- `web nao-ghost + soma de todos os targets ativos Twitch/YouTube`
+- `web (live/history nao-ghost) + soma de todos os targets ativos Twitch/YouTube`
+- `/broadcast.html` nao envia heartbeat e nunca entra na contagem
 
 Regra da janela humana:
 
@@ -128,10 +129,7 @@ Regra da janela humana:
 - se entrar audiencia durante janela longa, encurta imediatamente para 30s
 - se restar menos de 30s, mantem o tempo restante
 
-### `ghost=true`
-
-Paginas com `?ghost=true` nao fazem heartbeat de presenca.
-Isso impede contaminar a contagem web quando o stream worker abre o broadcast.
+`?ghost=true` continua disponivel para live/history quando quiser abrir paginas sem contar presenca.
 
 ## Stream worker
 

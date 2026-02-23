@@ -20,6 +20,9 @@ export type RoundState = {
   _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
+  skipped?: boolean;
+  skipReason?: string;
+  skipType?: "prompt_error" | "answer_error";
   prompter: Model;
   promptTask: TaskInfo;
   prompt?: string;
@@ -39,9 +42,11 @@ export type GameState = {
   scores: Record<string, number>;
   humanScores: Record<string, number>;
   humanVoteTotals: Record<string, number>;
+  enabledModelIds: string[];
   done: boolean;
   isPaused: boolean;
   generation: number;
+  completedRounds: number;
 };
 
 export type LiveStatePayload = {
@@ -57,4 +62,5 @@ export type AdminSnapshot = {
   completedInMemory: number;
   persistedRounds: number;
   viewerCount: number;
+  enabledModelIds: string[];
 };

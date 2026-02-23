@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { MODELS } from "./shared/models";
 import "./admin.css";
 
 type AdminSnapshot = {
@@ -9,6 +10,7 @@ type AdminSnapshot = {
   completedInMemory: number;
   persistedRounds: number;
   viewerCount: number;
+  enabledModelIds: string[];
 };
 
 type ViewerTarget = {
@@ -138,6 +140,12 @@ function App() {
   }, []);
 
   const busy = useMemo(() => pending !== null, [pending]);
+  const enabledModelIds = useMemo(() => {
+    const fromSnapshot = snapshot?.enabledModelIds ?? [];
+    if (fromSnapshot.length > 0) return fromSnapshot;
+    return MODELS.map((model) => model.id);
+  }, [snapshot?.enabledModelIds]);
+  const enabledModelsSet = useMemo(() => new Set(enabledModelIds), [enabledModelIds]);
 
   function resetTargetForm() {
     setTargetPlatform("twitch");
@@ -310,6 +318,29 @@ function App() {
     }
   }
 
+  async function onToggleModel(modelId: string, enabled: boolean) {
+    setError(null);
+    setPending(`toggle-model:${modelId}`);
+    try {
+      const passcodeValue = readStoredPasscode();
+      const data = await requestAdminJson<AdminResponse>("/admin/models", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify({ modelId, enabled }),
+      });
+      setSnapshot(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Falha ao atualizar modelo";
+      const lowered = message.toLowerCase();
+      if (lowered.includes("unauthorized") || lowered.includes("nao autorizado")) {
+        setMode("locked");
+        setSnapshot(null);
+      }
+      setError(message);
+    } finally {
+      setPending(null);
+    }
+  }
+
   function onEditViewerTarget(target: ViewerTarget) {
     setEditingTargetId(target._id);
     setTargetPlatform(target.platform);
@@ -466,6 +497,37 @@ function App() {
           >
             Resetar Dados
           </button>
+        </section>
+
+        <section className="models">
+          <div className="models__header">
+            <h2>Modelos</h2>
+            <span className="models__count">
+              {enabledModelIds.length} ativos de {MODELS.length}
+            </span>
+          </div>
+          <p className="muted">
+            Modelos desativados saem das proximas rodadas e ficam ocultos no leaderboard.
+          </p>
+          <div className="models__list">
+            {MODELS.map((model) => {
+              const enabled = enabledModelsSet.has(model.id);
+              return (
+                <label className="model-row" key={model.id}>
+                  <div className="model-row__meta">
+                    <span className="model-row__name">{model.name}</span>
+                    <span className="model-row__id">{model.id}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(event) => onToggleModel(model.id, event.target.checked)}
+                    disabled={busy}
+                  />
+                </label>
+              );
+            })}
+          </div>
         </section>
 
         <section className="targets">
