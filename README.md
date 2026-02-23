@@ -29,6 +29,7 @@ As envs configuraveis estao separadas por servico:
 ### Web client
 
 - `VITE_CONVEX_URL` (obrigatoria)
+- `VITE_CONVEX_SITE_URL` (obrigatoria para `/admin/*`)
 
 ### Convex backend
 
@@ -169,7 +170,7 @@ bun run preview:web
 1. `web`
 - Dockerfile: `Dockerfile`
 - Porta: `5109`
-- Env minima: `VITE_CONVEX_URL`
+- Env minima: `VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL`
 
 2. `stream-worker`
 - Dockerfile: `Dockerfile.stream`

@@ -138,6 +138,55 @@ body {
   color: var(--text-dim);
 }
 
+.voting-countdown {
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+}
+
+.voting-countdown__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.voting-countdown__label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.voting-countdown__time {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text);
+}
+
+.voting-countdown__bar {
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.voting-countdown__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.35s linear;
+}
+
+.voting-countdown--zero .voting-countdown__fill {
+  background: #555;
+}
 /* ── Prompt ───────────────────────────────────────────────────── */
 
 .prompt {
@@ -385,13 +434,6 @@ body {
 .viewer-vote-meta__icon {
   margin-left: auto;
   font-size: 14px;
-}
-
-
-.vote-countdown {
-  color: var(--text);
-  font-weight: 700;
-  margin-left: 8px;
 }
 
 /* ── Tie ──────────────────────────────────────────────────────── */
@@ -749,3 +791,4 @@ body {
     padding: 24px;
   }
 }
+

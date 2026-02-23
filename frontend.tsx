@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
+import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
 import "./frontend.css";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -22,6 +23,7 @@ type VoteInfo = {
   error?: boolean;
 };
 type RoundState = {
+  _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
   prompter: Model;
@@ -348,11 +350,11 @@ function ContestantCard({
 function Arena({
   round,
   total,
-  viewerVotingSecondsLeft,
+  votingCountdown,
 }: {
   round: RoundState;
   total: number | null;
-  viewerVotingSecondsLeft: number;
+  votingCountdown: VotingCountdownView | null;
 }) {
   const [contA, contB] = round.contestants;
   const showVotes = round.phase === "voting" || round.phase === "done";
@@ -369,7 +371,7 @@ function Arena({
   const votersB = round.votes.filter((v) => v.votedFor?.name === contB.name);
   const totalViewerVotes = (round.viewerVotesA ?? 0) + (round.viewerVotesB ?? 0);
 
-  const showCountdown = round.phase === "voting" && viewerVotingSecondsLeft > 0;
+  const showCountdown = round.phase === "voting" && Boolean(votingCountdown);
 
   const phaseText =
     round.phase === "prompting"
@@ -389,11 +391,23 @@ function Arena({
         </span>
         <span className="arena__phase">
           {phaseText}
-          {showCountdown && (
-            <span className="vote-countdown">{viewerVotingSecondsLeft}s</span>
-          )}
         </span>
       </div>
+
+      {showCountdown && votingCountdown && (
+        <div className={`voting-countdown ${votingCountdown.isZero ? "voting-countdown--zero" : ""}`}>
+          <div className="voting-countdown__top">
+            <span className="voting-countdown__label">{votingCountdown.label}</span>
+            <span className="voting-countdown__time">{votingCountdown.display}</span>
+          </div>
+          <div className="voting-countdown__bar">
+            <div
+              className="voting-countdown__fill"
+              style={{ width: `${Math.round(votingCountdown.progress * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <PromptCard round={round} />
 
@@ -614,8 +628,9 @@ function ConnectingScreen() {
 // â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function App() {
-  const [viewerVotingSecondsLeft, setViewerVotingSecondsLeft] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const viewerIdRef = React.useRef<string | null>(null);
+  const countdownTrackerRef = React.useRef(createVotingCountdownTracker());
   const ghostViewer = React.useMemo(() => isGhostViewer(), []);
 
   const liveState = useQuery(convexApi.live.getState, {}) as
@@ -628,22 +643,12 @@ function App() {
   const totalRounds = liveState?.totalRounds ?? null;
   const viewerCount = liveState?.viewerCount ?? 0;
 
-  // Countdown timer for viewer voting
   useEffect(() => {
-    const endsAt = state?.active?.viewerVotingEndsAt;
-    if (!endsAt || state?.active?.phase !== "voting") {
-      setViewerVotingSecondsLeft(0);
-      return;
-    }
-
-    function tick() {
-      const remaining = Math.max(0, Math.ceil((endsAt! - Date.now()) / 1000));
-      setViewerVotingSecondsLeft(remaining);
-    }
-    tick();
-    const interval = setInterval(tick, 1000);
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
     return () => clearInterval(interval);
-  }, [state?.active?.viewerVotingEndsAt, state?.active?.phase]);
+  }, []);
 
   useEffect(() => {
     const viewerId = getOrCreateViewerId();
@@ -664,6 +669,8 @@ function App() {
   }, [ensureStarted, heartbeat, ghostViewer]);
 
   if (!liveState || !state) return <ConnectingScreen />;
+
+  const votingCountdown = countdownTrackerRef.current.compute(state.active, nowMs);
 
   const isNextPrompting =
     state.active?.phase === "prompting" && !state.active.prompt;
@@ -704,7 +711,7 @@ function App() {
             <Arena
               round={displayRound}
               total={totalRounds}
-              viewerVotingSecondsLeft={viewerVotingSecondsLeft}
+              votingCountdown={votingCountdown}
             />
           ) : (
             <div className="waiting">

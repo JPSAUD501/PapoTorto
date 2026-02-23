@@ -29,10 +29,10 @@ type Mode = "checking" | "locked" | "ready";
 const RESET_TOKEN = "RESET";
 const ADMIN_PASSCODE_KEY = "papotorto.adminPasscode";
 
-function getConvexUrl(): string {
+function getConvexSiteUrl(): string {
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
-  const url = env?.VITE_CONVEX_URL;
-  if (!url) throw new Error("VITE_CONVEX_URL is not configured");
+  const url = env?.VITE_CONVEX_SITE_URL?.trim();
+  if (!url) throw new Error("VITE_CONVEX_SITE_URL is not configured");
   return url.replace(/\/$/, "");
 }
 
@@ -70,7 +70,7 @@ async function requestAdminJson<T>(
   }
   headers.set("x-admin-passcode", passcode);
 
-  const response = await fetch(`${getConvexUrl()}${path}`, {
+  const response = await fetch(`${getConvexSiteUrl()}${path}`, {
     ...init,
     headers,
     cache: "no-store",
@@ -191,7 +191,7 @@ function App() {
     setPending("export");
     try {
       const passcodeValue = readStoredPasscode();
-      const response = await fetch(`${getConvexUrl()}/admin/export`, {
+      const response = await fetch(`${getConvexSiteUrl()}/admin/export`, {
         cache: "no-store",
         headers: {
           "x-admin-passcode": passcodeValue,

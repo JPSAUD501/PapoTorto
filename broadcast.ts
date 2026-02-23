@@ -1,5 +1,6 @@
 import { ConvexClient } from "convex/browser";
 import { api } from "./convex/_generated/api";
+import { createVotingCountdownTracker, type VotingCountdownView } from "./shared/countdown";
 
 type Model = { id: string; name: string };
 type TaskInfo = {
@@ -17,6 +18,7 @@ type VoteInfo = {
   error?: boolean;
 };
 type RoundState = {
+  _id?: string;
   num: number;
   phase: "prompting" | "answering" | "voting" | "done";
   prompter: Model;
@@ -86,6 +88,7 @@ let viewerCount = 0;
 let connected = false;
 const convex = new ConvexClient(getConvexUrl());
 const convexApi = api as any;
+const countdownTracker = createVotingCountdownTracker();
 let liveUnsubscribe: { unsubscribe: () => void } | null = null;
 let heartbeatTimer: number | null = null;
 
@@ -427,10 +430,46 @@ function drawScoreboard(
   drawRankingSection("RANKING PLATEIA", humanEntries, maxHuman, 70, "👥");
   drawRankingSection("RANKING IA", iaEntries, maxIa, 520, "👑");
 }
+function drawVotingCountdownWidget(countdown: VotingCountdownView, mainW: number) {
+  const boxW = 332;
+  const boxH = 66;
+  const x = mainW - 64 - boxW;
+  const y = 170;
+
+  roundRect(x, y, boxW, boxH, 10, "rgba(255,255,255,0.03)");
+  ctx.strokeStyle = "#1c1c1c";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, boxW - 1, boxH - 1);
+
+  ctx.font = '600 14px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#888";
+  ctx.fillText(countdown.label.toUpperCase(), x + 14, y + 25);
+
+  ctx.font = '700 28px "JetBrains Mono", monospace';
+  ctx.fillStyle = "#ededed";
+  const timeWidth = ctx.measureText(countdown.display).width;
+  ctx.fillText(countdown.display, x + boxW - 14 - timeWidth, y + 32);
+
+  const barX = x + 14;
+  const barY = y + boxH - 16;
+  const barW = boxW - 28;
+  const barH = 6;
+  roundRect(barX, barY, barW, barH, 3, "#1c1c1c");
+  roundRect(
+    barX,
+    barY,
+    Math.round(barW * countdown.progress),
+    barH,
+    3,
+    countdown.isZero ? "#555" : "#D97757",
+  );
+}
+
 function drawRound(round: RoundState) {
   const mainW = WIDTH - 380;
+  const countdown = countdownTracker.compute(round, Date.now());
 
-  let phaseLabel =
+  const phaseLabel =
     (round.phase === "prompting"
       ? "Escrevendo prompt"
       : round.phase === "answering"
@@ -439,12 +478,6 @@ function drawRound(round: RoundState) {
           ? "Jurados votando"
           : "Concluida"
     ).toUpperCase();
-
-  // Append countdown during voting phase
-  let countdownSeconds = 0;
-  if (round.phase === "voting" && round.viewerVotingEndsAt) {
-    countdownSeconds = Math.max(0, Math.ceil((round.viewerVotingEndsAt - Date.now()) / 1000));
-  }
 
   ctx.font = '700 22px "JetBrains Mono", monospace';
   ctx.fillStyle = "#ededed";
@@ -455,11 +488,8 @@ function drawRound(round: RoundState) {
   const labelWidth = ctx.measureText(phaseLabel).width;
   ctx.fillText(phaseLabel, mainW - 64 - labelWidth, 150);
 
-  if (countdownSeconds > 0) {
-    const countdownText = `${countdownSeconds}S`;
-    ctx.fillStyle = "#ededed";
-    const cdWidth = ctx.measureText(countdownText).width;
-    ctx.fillText(countdownText, mainW - 64 - labelWidth - cdWidth - 12, 150);
+  if (round.phase === "voting" && countdown) {
+    drawVotingCountdownWidget(countdown, mainW);
   }
 
   ctx.font = '600 18px "JetBrains Mono", monospace';
@@ -817,3 +847,5 @@ window.addEventListener("beforeunload", () => {
   if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
   void convex.close();
 });
+
+

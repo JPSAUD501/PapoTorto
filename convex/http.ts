@@ -107,6 +107,29 @@ function withOptions(handler: (ctx: any, request: Request) => Promise<Response>)
   });
 }
 
+for (const path of [
+  "/admin/login",
+  "/admin/viewer-targets",
+  "/admin/viewer-targets/delete",
+  "/admin/status",
+  "/admin/pause",
+  "/admin/resume",
+  "/admin/reset",
+  "/admin/export",
+  "/fossabot/vote",
+]) {
+  http.route({
+    path,
+    method: "OPTIONS",
+    handler: httpAction(async (_ctx, request) => {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(request),
+      });
+    }),
+  });
+}
+
 http.route({
   path: "/admin/login",
   method: "POST",
