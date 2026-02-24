@@ -535,6 +535,23 @@ export const recoverStaleActiveRound = internalMutation({
     }
 
     if (round.phase === "prompting") {
+      const promptReadyWithoutError = Boolean(round.prompt) && !round.promptTask?.error;
+      const firstAnswerTask = round.answerTasks?.[0];
+      const secondAnswerTask = round.answerTasks?.[1];
+      const canResumeAnswering = Boolean(firstAnswerTask && secondAnswerTask && promptReadyWithoutError);
+      if (canResumeAnswering) {
+        const answerStart = Date.now();
+        await ctx.db.patch(round._id, {
+          phase: "answering",
+          answerTasks: [
+            { ...firstAnswerTask, startedAt: answerStart },
+            { ...secondAnswerTask, startedAt: answerStart },
+          ],
+          updatedAt: answerStart,
+        });
+        return { recovered: true, reason: "prompting_prompt_ready_resumed" };
+      }
+
       const promptStartedAt = round.promptTask?.startedAt ?? round.createdAt ?? round.updatedAt ?? now;
       if (now - promptStartedAt <= promptStaleThresholdMs) {
         return { recovered: false, reason: "prompting_not_stale" };

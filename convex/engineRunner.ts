@@ -80,6 +80,16 @@ function pickRoundModels(models: RoleCapableModel[]): {
   return null;
 }
 
+function pickVotersForContestants(
+  models: RoleCapableModel[],
+  contestants: [Model, Model],
+): Model[] {
+  const contestantIds = new Set([contestants[0].id, contestants[1].id]);
+  return shuffle(models.filter((model) => model.canVote !== false && !contestantIds.has(model.id))).map((model) =>
+    toRoundModel(model),
+  );
+}
+
 async function leaseStillValid(ctx: any, leaseId: string, generation: number): Promise<boolean> {
   const state = await ctx.runQuery(convexInternal.engine.getRunnerState, {});
   if (!state) return false;
@@ -199,148 +209,181 @@ export const runLoop = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const state = await ctx.runQuery(convexInternal.engine.getRunnerState, {});
-    if (!state) return null;
-    if (state.runnerLeaseId !== args.leaseId) return null;
-    if (!state.runnerLeaseUntil || state.runnerLeaseUntil <= Date.now()) return null;
-    const expectedGeneration = state.generation;
-
-    if (state.done) {
-      return null;
-    }
-
-    if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) {
-      return null;
-    }
-
-    if (state.isPaused) {
-      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_PAUSED_MS, convexInternal.engineRunner.runLoop, {
-        leaseId: args.leaseId,
-      });
-      return null;
-    }
-
-    if (state.activeRoundId) {
-      const recovery = await ctx.runMutation(convexInternal.engine.recoverStaleActiveRound, {
-        expectedGeneration,
-      });
-      if (recovery.recovered) {
-        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_RECOVERED_MS, convexInternal.engineRunner.runLoop, {
-          leaseId: args.leaseId,
-        });
-      } else {
-        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_PENDING_MS, convexInternal.engineRunner.runLoop, {
-          leaseId: args.leaseId,
-        });
-      }
-      return null;
-    }
-
-    const enabledModels = (await ctx.runQuery(
-      convexInternal.models.listActiveForRuntime,
-      {},
-    )) as RoleCapableModel[];
-    if (enabledModels.length < ENGINE_RUNNER_MIN_ENABLED_MODELS) {
-      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
-        leaseId: args.leaseId,
-      });
-      return null;
-    }
-
-    const selectedModels = pickRoundModels(enabledModels);
-    if (!selectedModels) {
-      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
-        leaseId: args.leaseId,
-      });
-      return null;
-    }
-    const { prompter, contestants, voters } = selectedModels;
-
-    const created = await ctx.runMutation(convexInternal.engine.createRound, {
-      expectedGeneration,
-      prompter,
-      contestants,
-    });
-
-    if (!created) {
-      await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS, convexInternal.engineRunner.runLoop, {
-        leaseId: args.leaseId,
-      });
-      return null;
-    }
-
-    const roundId = created.roundId;
-    const roundNum = created.num;
-    let promptReasoningEstimate = 0;
-
     try {
-      await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
-        generation: expectedGeneration,
-        roundId,
-        requestType: "prompt",
-        modelId: prompter.id,
-        estimatedReasoningTokens: 0,
-      });
+      const state = await ctx.runQuery(convexInternal.engine.getRunnerState, {});
+      if (!state) return null;
+      if (state.runnerLeaseId !== args.leaseId) return null;
+      if (!state.runnerLeaseUntil || state.runnerLeaseUntil <= Date.now()) return null;
+      const expectedGeneration = state.generation;
 
-      const promptResult = await withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
-        return await callGeneratePrompt(prompter, async (estimatedReasoningTokens, finalized) => {
-          promptReasoningEstimate = estimatedReasoningTokens;
-          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+      if (state.done) {
+        return null;
+      }
+
+      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) {
+        return null;
+      }
+
+      if (state.isPaused) {
+        await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_PAUSED_MS, convexInternal.engineRunner.runLoop, {
+          leaseId: args.leaseId,
+        });
+        return null;
+      }
+
+      let roundId: any;
+      let roundNum = 0;
+      let prompter!: Model;
+      let contestants!: [Model, Model];
+      let voters: Model[] = [];
+      let shouldStartAnswering = false;
+
+      if (state.activeRoundId) {
+        const activeRound = await ctx.runQuery(convexInternal.engine.getRoundForRunner, {
+          roundId: state.activeRoundId,
+        });
+        const canResumeAfterPrompt =
+          activeRound &&
+          activeRound.phase === "prompting" &&
+          Boolean(activeRound.prompt) &&
+          !activeRound.promptTask?.error &&
+          Boolean(activeRound.contestants?.[0]) &&
+          Boolean(activeRound.contestants?.[1]) &&
+          Boolean(activeRound.prompter);
+
+        if (!canResumeAfterPrompt) {
+          const recovery = await ctx.runMutation(convexInternal.engine.recoverStaleActiveRound, {
+            expectedGeneration,
+          });
+          if (recovery.recovered) {
+            await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_RECOVERED_MS, convexInternal.engineRunner.runLoop, {
+              leaseId: args.leaseId,
+            });
+          } else {
+            await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_ACTIVE_ROUND_PENDING_MS, convexInternal.engineRunner.runLoop, {
+              leaseId: args.leaseId,
+            });
+          }
+          return null;
+        }
+
+        roundId = activeRound._id;
+        roundNum = activeRound.num;
+        prompter = activeRound.prompter;
+        contestants = [activeRound.contestants[0], activeRound.contestants[1]];
+        shouldStartAnswering = true;
+      } else {
+        const enabledModels = (await ctx.runQuery(
+          convexInternal.models.listActiveForRuntime,
+          {},
+        )) as RoleCapableModel[];
+        if (enabledModels.length < ENGINE_RUNNER_MIN_ENABLED_MODELS) {
+          await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
+            leaseId: args.leaseId,
+          });
+          return null;
+        }
+
+        const selectedModels = pickRoundModels(enabledModels);
+        if (!selectedModels) {
+          await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_BLOCKED_MS, convexInternal.engineRunner.runLoop, {
+            leaseId: args.leaseId,
+          });
+          return null;
+        }
+        prompter = selectedModels.prompter;
+        contestants = selectedModels.contestants;
+        voters = selectedModels.voters;
+
+        const created = await ctx.runMutation(convexInternal.engine.createRound, {
+          expectedGeneration,
+          prompter,
+          contestants,
+        });
+
+        if (!created) {
+          await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS, convexInternal.engineRunner.runLoop, {
+            leaseId: args.leaseId,
+          });
+          return null;
+        }
+
+        roundId = created.roundId;
+        roundNum = created.num;
+        shouldStartAnswering = true;
+        let promptReasoningEstimate = 0;
+
+        try {
           await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
             generation: expectedGeneration,
             roundId,
             requestType: "prompt",
             modelId: prompter.id,
-            estimatedReasoningTokens,
-            finalized,
+            estimatedReasoningTokens: 0,
           });
+
+          const promptResult = await withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
+            return await callGeneratePrompt(prompter, async (estimatedReasoningTokens, finalized) => {
+              promptReasoningEstimate = estimatedReasoningTokens;
+              if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
+              await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
+                generation: expectedGeneration,
+                roundId,
+                requestType: "prompt",
+                modelId: prompter.id,
+                estimatedReasoningTokens,
+                finalized,
+              });
+            });
+          });
+          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
+
+          await ctx.runMutation(convexInternal.engine.setPromptResult, {
+            expectedGeneration,
+            roundId,
+            prompt: promptResult.text,
+            metrics: toTaskMetrics(promptResult.metrics),
+          });
+          await recordUsageIfAvailable(ctx, {
+            generation: expectedGeneration,
+            roundId,
+            roundNum,
+            requestType: "prompt",
+            model: prompter,
+            metrics: promptResult.metrics,
+          });
+        } catch {
+          if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
+
+          await ctx.runMutation(convexInternal.usage.finalizeLiveReasoningProgress, {
+            generation: expectedGeneration,
+            roundId,
+            requestType: "prompt",
+            modelId: prompter.id,
+            estimatedReasoningTokens: promptReasoningEstimate,
+          });
+
+          await ctx.runMutation(convexInternal.engine.setPromptError, {
+            expectedGeneration,
+            roundId,
+            error: `Falha ao gerar prompt (${MODEL_ATTEMPTS} tentativas)`,
+          });
+
+          await sleep(SKIPPED_ROUND_DELAY_MS);
+          if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
+          await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+          return null;
+        }
+      }
+
+      if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
+
+      if (shouldStartAnswering) {
+        await ctx.runMutation(convexInternal.engine.startAnswering, {
+          expectedGeneration,
+          roundId,
         });
-      });
-      if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
-
-      await ctx.runMutation(convexInternal.engine.setPromptResult, {
-        expectedGeneration,
-        roundId,
-        prompt: promptResult.text,
-        metrics: toTaskMetrics(promptResult.metrics),
-      });
-      await recordUsageIfAvailable(ctx, {
-        generation: expectedGeneration,
-        roundId,
-        roundNum,
-        requestType: "prompt",
-        model: prompter,
-        metrics: promptResult.metrics,
-      });
-    } catch {
-      if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
-
-      await ctx.runMutation(convexInternal.usage.finalizeLiveReasoningProgress, {
-        generation: expectedGeneration,
-        roundId,
-        requestType: "prompt",
-        modelId: prompter.id,
-        estimatedReasoningTokens: promptReasoningEstimate,
-      });
-
-      await ctx.runMutation(convexInternal.engine.setPromptError, {
-        expectedGeneration,
-        roundId,
-        error: `Falha ao gerar prompt (${MODEL_ATTEMPTS} tentativas)`,
-      });
-
-      await sleep(SKIPPED_ROUND_DELAY_MS);
-      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
-      await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
-      return null;
-    }
-
-    if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return null;
-
-    await ctx.runMutation(convexInternal.engine.startAnswering, {
-      expectedGeneration,
-      roundId,
-    });
+      }
 
     const currentRound = await ctx.runQuery(convexInternal.engine.getRoundForRunner, { roundId });
     if (!currentRound || !currentRound.prompt) {
@@ -349,8 +392,11 @@ export const runLoop = internalAction({
     }
 
     const answerReasoningEstimates = [0, 0];
+    const pendingAnswerIndexes = [0, 1].filter((answerIndex) => !currentRound.answerTasks?.[answerIndex]?.finishedAt);
     await Promise.all(
-      contestants.map(async (contestant, answerIndex) => {
+      pendingAnswerIndexes.map(async (answerIndex) => {
+        const contestant = contestants[answerIndex];
+        if (!contestant) return;
         await ctx.runMutation(convexInternal.usage.upsertLiveReasoningProgress, {
           generation: expectedGeneration,
           roundId,
@@ -364,7 +410,9 @@ export const runLoop = internalAction({
 
     await withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
       await Promise.all(
-        contestants.map(async (contestant, answerIndex) => {
+        pendingAnswerIndexes.map(async (answerIndex) => {
+          const contestant = contestants[answerIndex];
+          if (!contestant) return;
           try {
             const result = await callGenerateAnswer(
               contestant,
@@ -443,6 +491,22 @@ export const runLoop = internalAction({
         expectedGeneration,
         roundId,
         error: `${modelName}: ${reason}`,
+      });
+      await sleep(SKIPPED_ROUND_DELAY_MS);
+      if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
+      await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
+      return null;
+    }
+
+    if (voters.length === 0) {
+      const enabledModels = (await ctx.runQuery(convexInternal.models.listActiveForRuntime, {})) as RoleCapableModel[];
+      voters = pickVotersForContestants(enabledModels, contestants);
+    }
+    if (voters.length === 0) {
+      await ctx.runMutation(convexInternal.engine.skipRoundForAnswerFailure, {
+        expectedGeneration,
+        roundId,
+        error: "Sem modelos disponiveis para votar",
       });
       await sleep(SKIPPED_ROUND_DELAY_MS);
       if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
@@ -581,6 +645,28 @@ export const runLoop = internalAction({
     if (!(await safeRenewLease(ctx, args.leaseId, expectedGeneration))) return null;
     await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId: args.leaseId });
 
-    return null;
+      return null;
+    } catch (error) {
+      console.warn(
+        "[engineRunner] runLoop failed unexpectedly",
+        error instanceof Error ? error.message : String(error),
+      );
+      try {
+        const latest = await ctx.runQuery(convexInternal.engine.getRunnerState, {});
+        if (
+          latest &&
+          latest.runnerLeaseId === args.leaseId &&
+          latest.runnerLeaseUntil &&
+          latest.runnerLeaseUntil > Date.now()
+        ) {
+          await ctx.scheduler.runAfter(ENGINE_RUNNER_RETRY_CREATE_ROUND_FAILED_MS, convexInternal.engineRunner.runLoop, {
+            leaseId: args.leaseId,
+          });
+        }
+      } catch {
+        // Ignore secondary scheduling failures; next ensure-start path can relaunch.
+      }
+      return null;
+    }
   },
 });

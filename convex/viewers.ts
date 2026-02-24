@@ -3,6 +3,7 @@ import { internalMutation, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
+  RUNNER_LEASE_MS,
   VIEWER_PRESENCE_REAPER_MAX_LIMIT,
   VIEWER_REAPER_BATCH,
   VIEWER_REAPER_INTERVAL_MS,
@@ -119,6 +120,21 @@ export const heartbeat = mutation({
     }
 
     const engine = await getOrCreateEngineState(ctx as any);
+    const hasValidLease = Boolean(
+      engine.runnerLeaseId &&
+      engine.runnerLeaseUntil &&
+      engine.runnerLeaseUntil > now,
+    );
+    if (!hasValidLease) {
+      const leaseId = crypto.randomUUID();
+      await ctx.db.patch(engine._id, {
+        runnerLeaseId: leaseId,
+        runnerLeaseUntil: now + RUNNER_LEASE_MS,
+        updatedAt: now,
+      });
+      await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
+    }
+
     if (!engine.reaperScheduledAt || engine.reaperScheduledAt <= now) {
       await ctx.scheduler.runAfter(0, convexInternal.viewers.reapExpired, {
         limit: VIEWER_REAPER_BATCH,
