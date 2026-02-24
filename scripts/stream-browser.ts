@@ -23,6 +23,16 @@ const PLAYLIST_TRACKS = 20_000;
 const BROADCAST_WAIT_TIMEOUT_MS = 30_000;
 const BROADCAST_WAIT_RETRY_MS = 1_000;
 
+function shouldDisableChromiumSandbox(): boolean {
+  const override = process.env.PUPPETEER_DISABLE_SANDBOX?.trim().toLowerCase();
+  if (override === "1" || override === "true") return true;
+  if (override === "0" || override === "false") return false;
+  if (typeof process.getuid === "function") {
+    return process.getuid() === 0;
+  }
+  return false;
+}
+
 function usage(): never {
   console.error("Usage: bun scripts/stream-browser.ts <live|dryrun>");
   console.error("Required for live mode: STREAM_RTMP_TARGET");
@@ -342,16 +352,21 @@ async function main() {
     },
   });
 
+  const browserLaunchArgs = [
+    "--autoplay-policy=no-user-gesture-required",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--allow-running-insecure-content",
+    "--disable-features=LocalNetworkAccessChecks",
+  ];
+  if (shouldDisableChromiumSandbox()) {
+    browserLaunchArgs.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
+
   const browser = await puppeteer.launch({
     headless: true,
-    args: [
-      "--autoplay-policy=no-user-gesture-required",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-backgrounding-occluded-windows",
-      "--allow-running-insecure-content",
-      "--disable-features=LocalNetworkAccessChecks",
-    ],
+    args: browserLaunchArgs,
   });
 
   const page = await browser.newPage();
