@@ -322,14 +322,22 @@ async function main() {
     firstChunkReject = reject;
   });
   let shutdown: (() => Promise<void>) | null = null;
+  const corsHeaders = new Headers({
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
+  });
 
   const chunkServer = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
+      if (url.pathname === "/chunks" && req.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
       if (url.pathname === "/chunks" && req.method === "POST") {
         if (!ffmpegWritable || !ffmpeg.stdin || typeof ffmpeg.stdin === "number") {
-          return new Response("stream closed", { status: 503 });
+          return new Response("stream closed", { status: 503, headers: corsHeaders });
         }
         try {
           const payload = await req.arrayBuffer();
@@ -337,7 +345,7 @@ async function main() {
           firstChunkResolve?.();
           firstChunkResolve = null;
           firstChunkReject = null;
-          return new Response("ok", { status: 200 });
+          return new Response("ok", { status: 200, headers: corsHeaders });
         } catch (error) {
           ffmpegWritable = false;
           const detail = error instanceof Error ? error : new Error(String(error));
@@ -345,10 +353,10 @@ async function main() {
           firstChunkResolve = null;
           firstChunkReject = null;
           void shutdown?.();
-          return new Response("write failed", { status: 500 });
+          return new Response("write failed", { status: 500, headers: corsHeaders });
         }
       }
-      return new Response("Not found", { status: 404 });
+      return new Response("Not found", { status: 404, headers: corsHeaders });
     },
   });
 
