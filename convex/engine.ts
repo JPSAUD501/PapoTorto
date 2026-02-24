@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import {
   DEFAULT_SCORES,
   MODEL_CALL_TIMEOUT_MS,
@@ -15,6 +16,8 @@ import {
   resolveRuntimeRoundTiming,
 } from "./state";
 import { readTotalViewerCount } from "./viewerCount";
+
+const convexInternal = internal as any;
 
 const modelReasoningEffortValidator = v.union(
   v.literal("xhigh"),
@@ -147,6 +150,10 @@ async function finalizeRoundInternal(ctx: any, state: any, round: any): Promise<
     updatedAt: Date.now(),
   });
 
+  await ctx.scheduler.runAfter(0, convexInternal.telegramActions.closeRoundPoll, {
+    roundId: round._id,
+  });
+
   return true;
 }
 
@@ -251,10 +258,11 @@ export const setPromptResult = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const state = await getEngineState(ctx as any);
     const round = await ctx.db.get(args.roundId);
-    if (!state || !round) return false;
-    if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
+    if (!round) return false;
+    if (round.generation !== args.expectedGeneration) return false;
+    if (round.phase !== "prompting") return false;
+    if (round.promptTask?.finishedAt) return true;
 
     await ctx.db.patch(args.roundId, {
       prompt: args.prompt,
@@ -316,10 +324,10 @@ export const startAnswering = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const state = await getEngineState(ctx as any);
     const round = await ctx.db.get(args.roundId);
-    if (!state || !round) return false;
-    if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
+    if (!round) return false;
+    if (round.generation !== args.expectedGeneration) return false;
+    if (round.phase !== "prompting") return false;
     const firstTask = round.answerTasks[0];
     const secondTask = round.answerTasks[1];
     if (!firstTask || !secondTask) return false;
@@ -350,14 +358,15 @@ export const setAnswerResult = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const state = await getEngineState(ctx as any);
     const round = await ctx.db.get(args.roundId);
-    if (!state || !round) return false;
-    if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
+    if (!round) return false;
+    if (round.generation !== args.expectedGeneration) return false;
+    if (round.phase !== "answering") return false;
     if (args.answerIndex !== 0 && args.answerIndex !== 1) return false;
 
     const task = round.answerTasks[args.answerIndex];
     if (!task) return false;
+    if (task.finishedAt) return true;
     const updatedTask = {
       ...task,
       finishedAt: Date.now(),
@@ -448,6 +457,10 @@ export const startVoting = internalMutation({
       updatedAt: Date.now(),
     });
 
+    await ctx.scheduler.runAfter(0, convexInternal.telegramActions.openRoundPoll, {
+      roundId: args.roundId,
+    });
+
     return true;
   },
 });
@@ -462,17 +475,16 @@ export const setModelVote = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const state = await getEngineState(ctx as any);
     const round = await ctx.db.get(args.roundId);
-    if (!state || !round) return false;
-    if (state.generation !== args.expectedGeneration || round.generation !== args.expectedGeneration) return false;
-    if (state.activeRoundId !== args.roundId) return false;
+    if (!round) return false;
+    if (round.generation !== args.expectedGeneration) return false;
     if (round.phase !== "voting") return false;
     if (args.voteIndex < 0 || args.voteIndex >= round.votes.length) return false;
 
     const votes = [...round.votes];
     const vote = votes[args.voteIndex];
     if (!vote) return false;
+    if (vote.finishedAt) return true;
     votes[args.voteIndex] = {
       ...vote,
       finishedAt: Date.now(),
@@ -538,8 +550,7 @@ export const recoverStaleActiveRound = internalMutation({
       const promptReadyWithoutError = Boolean(round.prompt) && !round.promptTask?.error;
       const firstAnswerTask = round.answerTasks?.[0];
       const secondAnswerTask = round.answerTasks?.[1];
-      const canResumeAnswering = Boolean(firstAnswerTask && secondAnswerTask && promptReadyWithoutError);
-      if (canResumeAnswering) {
+      if (firstAnswerTask && secondAnswerTask && promptReadyWithoutError) {
         const answerStart = Date.now();
         await ctx.db.patch(round._id, {
           phase: "answering",

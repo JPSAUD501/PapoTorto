@@ -108,6 +108,13 @@ export default defineSchema({
     projectionBootstrapStartedAt: v.optional(v.number()),
     projectionBootstrapFinishedAt: v.optional(v.number()),
     projectionBootstrapError: v.optional(v.string()),
+    telegramEnabled: v.optional(v.boolean()),
+    telegramBotToken: v.optional(v.string()),
+    telegramChannelId: v.optional(v.string()),
+    telegramPollingScheduledAt: v.optional(v.number()),
+    telegramLastUpdateId: v.optional(v.number()),
+    telegramLastPolledAt: v.optional(v.number()),
+    telegramLastError: v.optional(v.string()),
   }).index("by_key", ["key"]),
 
   rounds: defineTable({
@@ -166,6 +173,49 @@ export default defineSchema({
     .index("by_round_side_shard", ["roundId", "side", "shard"])
     .index("by_round", ["roundId"])
     .index("by_generation", ["generation"]),
+
+  telegramRoundPolls: defineTable({
+    generation: v.number(),
+    roundId: v.id("rounds"),
+    pollId: v.string(),
+    chatId: v.string(),
+    messageId: v.number(),
+    votesA: v.number(),
+    votesB: v.number(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("closed"),
+      v.literal("deleted"),
+      v.literal("error"),
+    ),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_roundId", ["roundId"])
+    .index("by_pollId", ["pollId"])
+    .index("by_generation", ["generation"])
+    .index("by_status", ["status"]),
+
+  telegramPollingState: defineTable({
+    key: v.literal("main"),
+    lastUpdateId: v.optional(v.number()),
+    lastPolledAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  platformPollingState: defineTable({
+    key: v.literal("main"),
+    scheduledAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  viewerReaperState: defineTable({
+    key: v.literal("main"),
+    scheduledAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 
   viewerPresence: defineTable({
     viewerId: v.string(),

@@ -4,7 +4,6 @@ import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
   DEFAULT_SCORES,
-  PLATFORM_VIEWER_POLL_INTERVAL_MS,
   ROUND_PURGE_BATCH_SIZE,
   RUNNER_LEASE_MS,
 } from "./constants";
@@ -36,10 +35,18 @@ function isValidYouTubeTarget(target: string): boolean {
   return /^[A-Za-z0-9_-]{11}$/.test(target);
 }
 
-function getViewerPollIntervalMs(): number {
-  const raw = Number.parseInt(process.env.PLATFORM_VIEWER_POLL_INTERVAL_MS ?? "", 10);
-  if (!Number.isFinite(raw) || raw <= 0) return PLATFORM_VIEWER_POLL_INTERVAL_MS;
-  return raw;
+function normalizeTelegramChannelId(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeTelegramBotToken(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function maskTelegramToken(token: string): string | null {
+  if (!token) return null;
+  if (token.length <= 8) return `${token.slice(0, 1)}***${token.slice(-1)}`;
+  return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
 const projectionTimingValidator = v.object({
@@ -48,6 +55,35 @@ const projectionTimingValidator = v.object({
   postRoundDelayActiveMs: v.number(),
   postRoundDelayIdleMs: v.number(),
 });
+
+const telegramConfigValidator = v.object({
+  enabled: v.boolean(),
+  channelId: v.string(),
+  hasBotToken: v.boolean(),
+  tokenPreview: v.union(v.string(), v.null()),
+  lastPolledAt: v.union(v.number(), v.null()),
+  lastError: v.union(v.string(), v.null()),
+});
+
+function toTelegramConfigPayload(state: any, pollingState?: any) {
+  const token = normalizeTelegramBotToken(state?.telegramBotToken);
+  const channelId = normalizeTelegramChannelId(state?.telegramChannelId);
+  const lastPolledAtRaw = pollingState?.lastPolledAt;
+  const lastErrorRaw = pollingState?.lastError;
+  return {
+    enabled: state?.telegramEnabled === true,
+    channelId,
+    hasBotToken: Boolean(token),
+    tokenPreview: maskTelegramToken(token),
+    lastPolledAt:
+      typeof lastPolledAtRaw === "number" && Number.isFinite(lastPolledAtRaw)
+        ? lastPolledAtRaw
+        : null,
+    lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim()
+      ? lastErrorRaw
+      : null,
+  };
+}
 
 export const getSnapshot = internalMutation({
   args: {},
@@ -177,13 +213,7 @@ export const upsertViewerTarget = internalMutation({
       });
     }
 
-    const state = await getOrCreateEngineState(ctx as any);
-    const interval = getViewerPollIntervalMs();
-    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
-    await ctx.db.patch(state._id, {
-      platformPollScheduledAt: now + interval,
-      updatedAt: now,
-    });
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.ensurePollingStarted, {});
 
     return id!;
   },
@@ -266,8 +296,6 @@ export const reset = internalMutation({
       enabledModelIds: getEnabledModelIds(models),
       runnerLeaseId: undefined,
       runnerLeaseUntil: undefined,
-      reaperScheduledAt: undefined,
-      platformPollScheduledAt: undefined,
       projectionBootstrapRunning: false,
       projectionBootstrapRunId: undefined,
       projectionBootstrapStartedAt: undefined,
@@ -276,13 +304,30 @@ export const reset = internalMutation({
       updatedAt: Date.now(),
     });
 
-    const pollInterval = getViewerPollIntervalMs();
-    const pollNow = Date.now();
-    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
-    await ctx.db.patch(state._id, {
-      platformPollScheduledAt: pollNow + pollInterval,
-      updatedAt: pollNow,
-    });
+    const resetNow = Date.now();
+    const platformPollingState = await ctx.db
+      .query("platformPollingState")
+      .withIndex("by_key", (q: any) => q.eq("key", "main"))
+      .first();
+    if (platformPollingState) {
+      await ctx.db.patch(platformPollingState._id, {
+        scheduledAt: undefined,
+        updatedAt: resetNow,
+      });
+    }
+
+    const viewerReaperState = await ctx.db
+      .query("viewerReaperState")
+      .withIndex("by_key", (q: any) => q.eq("key", "main"))
+      .first();
+    if (viewerReaperState) {
+      await ctx.db.patch(viewerReaperState._id, {
+        scheduledAt: undefined,
+        updatedAt: resetNow,
+      });
+    }
+
+    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.ensurePollingStarted, {});
 
     const presences = await ctx.db.query("viewerPresence").collect();
     for (const row of presences) {
@@ -309,6 +354,11 @@ export const reset = internalMutation({
       cursor: undefined,
       numItems: ROUND_PURGE_BATCH_SIZE,
     });
+    await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationTelegramRoundPollBatch, {
+      generation: oldGeneration,
+      cursor: undefined,
+      numItems: ROUND_PURGE_BATCH_SIZE,
+    });
     await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationUsageEventBatch, {
       generation: oldGeneration,
       cursor: undefined,
@@ -319,6 +369,9 @@ export const reset = internalMutation({
       cursor: undefined,
       numItems: ROUND_PURGE_BATCH_SIZE,
     });
+
+    await ctx.runMutation(convexInternal.telegram.resetPollingState, {});
+    await ctx.runMutation(convexInternal.telegram.ensurePollingStarted, {});
 
     return { generation: nextGeneration };
   },
@@ -371,6 +424,72 @@ export const updateProjectionTimingSettings = internalMutation({
   },
 });
 
+export const getTelegramConfig = internalQuery({
+  args: {},
+  returns: telegramConfigValidator,
+  handler: async (ctx) => {
+    const [state, pollingState] = await Promise.all([
+      getEngineState(ctx as any),
+      ctx.db
+        .query("telegramPollingState")
+        .withIndex("by_key", (q: any) => q.eq("key", "main"))
+        .first(),
+    ]);
+    return toTelegramConfigPayload(state, pollingState);
+  },
+});
+
+export const updateTelegramConfig = internalMutation({
+  args: {
+    enabled: v.boolean(),
+    channelId: v.string(),
+    botToken: v.optional(v.string()),
+  },
+  returns: telegramConfigValidator,
+  handler: async (ctx, args) => {
+    const state = await getOrCreateEngineState(ctx as any);
+    const now = Date.now();
+
+    const nextEnabled = args.enabled === true;
+    const nextChannelId = normalizeTelegramChannelId(args.channelId);
+    const incomingToken = typeof args.botToken === "string" ? normalizeTelegramBotToken(args.botToken) : undefined;
+    const existingToken = normalizeTelegramBotToken(state.telegramBotToken);
+    const resolvedToken = incomingToken !== undefined ? incomingToken : existingToken;
+
+    if (nextEnabled && !nextChannelId) {
+      throw new Error("Channel ID do Telegram e obrigatorio quando integrado.");
+    }
+    if (nextEnabled && !resolvedToken) {
+      throw new Error("Bot token do Telegram e obrigatorio quando integrado.");
+    }
+
+    const patch: Record<string, unknown> = {
+      telegramEnabled: nextEnabled,
+      telegramChannelId: nextChannelId,
+      updatedAt: now,
+    };
+    if (incomingToken !== undefined) {
+      patch.telegramBotToken = incomingToken || undefined;
+    }
+
+    await ctx.db.patch(state._id, patch);
+    if (incomingToken !== undefined || !nextEnabled) {
+      await ctx.runMutation(convexInternal.telegram.resetPollingState, {});
+    }
+    const updated = await getOrCreateEngineState(ctx as any);
+
+    if (nextEnabled) {
+      await ctx.runMutation(convexInternal.telegram.ensurePollingStarted, {});
+    }
+
+    const pollingState = await ctx.db
+      .query("telegramPollingState")
+      .withIndex("by_key", (q: any) => q.eq("key", "main"))
+      .first();
+    return toTelegramConfigPayload(updated, pollingState);
+  },
+});
+
 export const getExportData = internalQuery({
   args: {},
   returns: v.any(),
@@ -382,6 +501,7 @@ export const getExportData = internalQuery({
         state: null,
         models: await ctx.db.query("models").collect(),
         viewerTargets: await ctx.db.query("viewerTargets").collect(),
+        telegramRoundPolls: [],
         rounds: [],
       };
     }
@@ -396,6 +516,10 @@ export const getExportData = internalQuery({
       state,
       models: await ctx.db.query("models").collect(),
       viewerTargets: await ctx.db.query("viewerTargets").collect(),
+      telegramRoundPolls: await ctx.db
+        .query("telegramRoundPolls")
+        .withIndex("by_generation", (q: any) => q.eq("generation", state.generation))
+        .collect(),
       rounds: rounds.map((round: any) => toClientRound(round)).filter(Boolean),
     };
   },
@@ -478,6 +602,35 @@ export const purgeGenerationTalliesBatch = internalMutation({
 
     if (!result.isDone) {
       await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationTalliesBatch, {
+        generation: args.generation,
+        cursor: result.continueCursor,
+        numItems: args.numItems,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const purgeGenerationTelegramRoundPollBatch = internalMutation({
+  args: {
+    generation: v.number(),
+    cursor: v.optional(v.string()),
+    numItems: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await ctx.db
+      .query("telegramRoundPolls")
+      .withIndex("by_generation", (q: any) => q.eq("generation", args.generation))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.numItems });
+
+    for (const row of result.page) {
+      await ctx.db.delete(row._id);
+    }
+
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, convexInternal.admin.purgeGenerationTelegramRoundPollBatch, {
         generation: args.generation,
         cursor: result.continueCursor,
         numItems: args.numItems,

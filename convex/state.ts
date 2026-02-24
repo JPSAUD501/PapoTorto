@@ -29,6 +29,10 @@ function normalizeMs(
   return Math.max(min, Math.min(max, numeric));
 }
 
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 export function resolveRuntimeRoundTiming(
   state?: {
     viewerVoteWindowActiveMs?: unknown;
@@ -107,6 +111,10 @@ export async function getOrCreateEngineState(
     if (typeof existing.projectionBootstrapRunning !== "boolean") {
       patch.projectionBootstrapRunning = false;
     }
+    const telegramEnabled = normalizeBoolean(existing.telegramEnabled, false);
+    if (existing.telegramEnabled !== telegramEnabled) {
+      patch.telegramEnabled = telegramEnabled;
+    }
 
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(existing._id, {
@@ -140,6 +148,7 @@ export async function getOrCreateEngineState(
     postRoundDelayActiveMs: DEFAULT_POST_ROUND_DELAY_ACTIVE_MS,
     postRoundDelayIdleMs: DEFAULT_POST_ROUND_DELAY_IDLE_MS,
     projectionBootstrapRunning: false,
+    telegramEnabled: false,
   });
 
   const created = await ctx.db.get(id);

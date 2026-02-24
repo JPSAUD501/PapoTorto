@@ -7,7 +7,6 @@ import {
   TWITCH_API_BATCH_SIZE,
   YOUTUBE_API_BATCH_SIZE,
 } from "./constants";
-import { getOrCreateEngineState } from "./state";
 
 type Platform = "twitch" | "youtube";
 
@@ -40,6 +39,23 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function getPlatformPollingState(ctx: any) {
+  return await ctx.db
+    .query("platformPollingState")
+    .withIndex("by_key", (q: any) => q.eq("key", "main"))
+    .first();
+}
+
+async function getOrCreatePlatformPollingState(ctx: any) {
+  const existing = await getPlatformPollingState(ctx);
+  if (existing) return existing;
+  const id = await ctx.db.insert("platformPollingState", {
+    key: "main",
+    updatedAt: Date.now(),
+  });
+  return await ctx.db.get(id);
 }
 
 async function getTwitchAccessToken(): Promise<string> {
@@ -236,12 +252,13 @@ export const ensurePollingStarted = internalMutation({
   returns: v.null(),
   handler: async (ctx) => {
     const now = Date.now();
-    const interval = getPollIntervalMs();
-    const state = await getOrCreateEngineState(ctx as any);
-    if (!state.platformPollScheduledAt || state.platformPollScheduledAt <= now) {
+    const state = await getOrCreatePlatformPollingState(ctx as any);
+    if (!state) return null;
+    if (!state.scheduledAt || state.scheduledAt <= now) {
+      const interval = getPollIntervalMs();
       await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
       await ctx.db.patch(state._id, {
-        platformPollScheduledAt: now + interval,
+        scheduledAt: now + interval,
         updatedAt: now,
       });
     }
@@ -255,10 +272,11 @@ export const scheduleNextPoll = internalMutation({
   handler: async (ctx) => {
     const now = Date.now();
     const interval = getPollIntervalMs();
-    const state = await getOrCreateEngineState(ctx as any);
+    const state = await getOrCreatePlatformPollingState(ctx as any);
+    if (!state) return null;
     await ctx.scheduler.runAfter(interval, convexInternal.platformViewers.pollTargets, {});
     await ctx.db.patch(state._id, {
-      platformPollScheduledAt: now + interval,
+      scheduledAt: now + interval,
       updatedAt: now,
     });
     return null;

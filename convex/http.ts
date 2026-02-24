@@ -143,6 +143,7 @@ for (const path of [
   "/admin/resume",
   "/admin/reset",
   "/admin/export",
+  "/admin/telegram/config",
   "/fossabot/vote",
 ]) {
   http.route({
@@ -679,6 +680,62 @@ http.route({
         ...corsHeaders(request),
       },
     });
+  }),
+});
+
+http.route({
+  path: "/admin/telegram/config",
+  method: "GET",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+    const config = await ctx.runQuery(convexInternal.admin.getTelegramConfig, {});
+    return json(request, { ok: true, ...config });
+  }),
+});
+
+http.route({
+  path: "/admin/telegram/config",
+  method: "POST",
+  handler: withOptions(async (ctx, request) => {
+    if (!isAuthorized(request)) {
+      return text(request, "Unauthorized", 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return text(request, "Invalid JSON", 400);
+    }
+
+    const payload = body as {
+      enabled?: boolean;
+      channelId?: string;
+      botToken?: string;
+    };
+
+    if (typeof payload.enabled !== "boolean") {
+      return text(request, "Invalid enabled", 400);
+    }
+    if (typeof payload.channelId !== "string") {
+      return text(request, "Invalid channelId", 400);
+    }
+    if (payload.botToken !== undefined && typeof payload.botToken !== "string") {
+      return text(request, "Invalid botToken", 400);
+    }
+
+    try {
+      const config = await ctx.runMutation(convexInternal.admin.updateTelegramConfig, {
+        enabled: payload.enabled,
+        channelId: payload.channelId,
+        botToken: payload.botToken,
+      });
+      return json(request, { ok: true, ...config });
+    } catch (error) {
+      return text(request, error instanceof Error ? error.message : "Failed to save Telegram config", 400);
+    }
   }),
 });
 

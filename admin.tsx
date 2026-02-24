@@ -38,6 +38,15 @@ type ViewerTarget = {
 
 type AdminResponse = { ok: true } & AdminSnapshot;
 type ViewerTargetsResponse = { ok: true; targets: ViewerTarget[] };
+type TelegramConfig = {
+  enabled: boolean;
+  channelId: string;
+  hasBotToken: boolean;
+  tokenPreview: string | null;
+  lastPolledAt: number | null;
+  lastError: string | null;
+};
+type TelegramConfigResponse = { ok: true } & TelegramConfig;
 type UsageSummary = {
   sampleSize: number;
   denominator: number;
@@ -155,7 +164,7 @@ const DEFAULT_ADMIN_PAGE: AdminPage = "operations";
 const ADMIN_PAGE_TABS: Array<{ id: AdminPage; label: string; description: string }> = [
   { id: "operations", label: "Operacao", description: "Controle do motor e status da rodada." },
   { id: "models", label: "Modelos", description: "Catalogo, papeis e configuracao dos modelos." },
-  { id: "targets", label: "Audiencia", description: "Targets de Twitch/YouTube e polling." },
+  { id: "targets", label: "Audiencia", description: "Targets de Twitch/YouTube e Telegram para votacao." },
   { id: "projections", label: "Projecoes", description: "Custos, participacao e simulacao de preco." },
 ];
 
@@ -347,6 +356,7 @@ function App() {
   );
   const [projectionBootstrap, setProjectionBootstrap] = useState<ProjectionBootstrapPayload | null>(null);
   const [viewerTargets, setViewerTargets] = useState<ViewerTarget[]>([]);
+  const [telegramConfig, setTelegramConfig] = useState<TelegramConfig | null>(null);
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -356,6 +366,9 @@ function App() {
   const [targetValue, setTargetValue] = useState("");
   const [targetEnabled, setTargetEnabled] = useState(true);
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [telegramEnabledInput, setTelegramEnabledInput] = useState(false);
+  const [telegramChannelIdInput, setTelegramChannelIdInput] = useState("");
+  const [telegramBotTokenInput, setTelegramBotTokenInput] = useState("");
   const [modelId, setModelId] = useState("");
   const [modelName, setModelName] = useState("");
   const [modelColor, setModelColor] = useState<string>(AVAILABLE_MODEL_COLORS[0]);
@@ -389,6 +402,18 @@ function App() {
       passcodeToUse,
     );
     setViewerTargets(response.targets);
+  }
+
+  function applyTelegramConfig(response: TelegramConfig) {
+    setTelegramConfig(response);
+    setTelegramEnabledInput(response.enabled);
+    setTelegramChannelIdInput(response.channelId ?? "");
+    setTelegramBotTokenInput("");
+  }
+
+  async function loadTelegramConfig(passcodeToUse: string) {
+    const response = await requestAdminJson<TelegramConfigResponse>("/admin/telegram/config", passcodeToUse);
+    applyTelegramConfig(response);
   }
 
   function applyUsagePayload(response: ModelsResponse) {
@@ -427,10 +452,15 @@ function App() {
         try {
           await Promise.all([
             loadViewerTargets(storedPasscode),
+            loadTelegramConfig(storedPasscode),
             loadModels(storedPasscode),
           ]);
         } catch {
           setViewerTargets([]);
+          setTelegramConfig(null);
+          setTelegramEnabledInput(false);
+          setTelegramChannelIdInput("");
+          setTelegramBotTokenInput("");
           setModels([]);
           setUsageByModel({});
           setUsageHourlyByModel({});
@@ -769,7 +799,7 @@ function App() {
       setSnapshot(data);
       setPasscode("");
       setMode("ready");
-      await Promise.all([loadViewerTargets(passcode), loadModels(passcode)]);
+      await Promise.all([loadViewerTargets(passcode), loadTelegramConfig(passcode), loadModels(passcode)]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao entrar");
     } finally {
@@ -913,9 +943,36 @@ function App() {
     setPending("refresh-targets");
     try {
       const passcodeValue = readStoredPasscode();
-      await loadViewerTargets(passcodeValue);
+      await Promise.all([loadViewerTargets(passcodeValue), loadTelegramConfig(passcodeValue)]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao recarregar targets");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function onSaveTelegramConfig(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setPending("save-telegram-config");
+    try {
+      const passcodeValue = readStoredPasscode();
+      const payload: { enabled: boolean; channelId: string; botToken?: string } = {
+        enabled: telegramEnabledInput,
+        channelId: telegramChannelIdInput.trim(),
+      };
+      const token = telegramBotTokenInput.trim();
+      if (token) {
+        payload.botToken = token;
+      }
+
+      const response = await requestAdminJson<TelegramConfigResponse>("/admin/telegram/config", passcodeValue, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      applyTelegramConfig(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar configuracao do Telegram");
     } finally {
       setPending(null);
     }
@@ -1499,7 +1556,8 @@ function App() {
             <div>
               <h2>Targets de Audiencia</h2>
               <p className="muted">
-                Twitch usa <code>user_login</code>. YouTube usa <code>videoId</code>.
+                Twitch usa <code>user_login</code>. YouTube usa <code>videoId</code>. Telegram usa{' '}
+                <code>@canal</code> ou <code>-100...</code>.
               </p>
             </div>
             <button type="button" className="btn" disabled={busy} onClick={onRefreshTargets}>
@@ -1615,6 +1673,83 @@ function App() {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          </div>
+
+          <div className="targets__workspace">
+            <aside className="targets__editor">
+              <h3>Telegram votacao</h3>
+              <form className="targets__form" onSubmit={onSaveTelegramConfig}>
+                <label className="field-label" htmlFor="telegram-channel-id">
+                  Channel ID
+                </label>
+                <input
+                  id="telegram-channel-id"
+                  className="text-input"
+                  value={telegramChannelIdInput}
+                  onChange={(event) => setTelegramChannelIdInput(event.target.value)}
+                  placeholder="@seu_canal ou -1001234567890"
+                  disabled={busy}
+                />
+
+                <label className="field-label" htmlFor="telegram-bot-token">
+                  Bot token (opcional para manter)
+                </label>
+                <input
+                  id="telegram-bot-token"
+                  type="password"
+                  className="text-input"
+                  value={telegramBotTokenInput}
+                  onChange={(event) => setTelegramBotTokenInput(event.target.value)}
+                  placeholder={telegramConfig?.hasBotToken ? "Token ja configurado" : "123456:ABCDEF..."}
+                  disabled={busy}
+                />
+
+                <label className="targets__checkbox">
+                  <input
+                    type="checkbox"
+                    checked={telegramEnabledInput}
+                    onChange={(event) => setTelegramEnabledInput(event.target.checked)}
+                    disabled={busy}
+                  />
+                  Ativar integracao Telegram
+                </label>
+
+                <div className="targets__form-actions">
+                  <button
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={busy || (telegramEnabledInput && !telegramChannelIdInput.trim())}
+                  >
+                    {pending === "save-telegram-config" ? "Salvando..." : "Salvar Telegram"}
+                  </button>
+                </div>
+              </form>
+            </aside>
+
+            <div className="targets__catalog">
+              <h3>Status Telegram</h3>
+              <div className="targets__list">
+                <div className="target-row target-row--telegram">
+                  <div className="target-row__main">
+                    <div className="target-row__name">
+                      <span className="target-row__platform">TELEGRAM</span>
+                      <span>{telegramConfig?.channelId || "canal nao configurado"}</span>
+                    </div>
+                    <div className="target-row__meta">
+                      <span>{telegramConfig?.enabled ? "ativo" : "desativado"}</span>
+                      <span>
+                        token:{" "}
+                        {telegramConfig?.hasBotToken
+                          ? (telegramConfig?.tokenPreview ?? "configurado")
+                          : "nao configurado"}
+                      </span>
+                      <span>ultimo poll: {formatLastPolled(telegramConfig?.lastPolledAt ?? undefined)}</span>
+                      {telegramConfig?.lastError && <span className="target-row__error">{telegramConfig.lastError}</span>}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

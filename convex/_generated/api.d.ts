@@ -20,6 +20,8 @@ import type * as models from "../models.js";
 import type * as platformViewers from "../platformViewers.js";
 import type * as rounds from "../rounds.js";
 import type * as state from "../state.js";
+import type * as telegram from "../telegram.js";
+import type * as telegramActions from "../telegramActions.js";
 import type * as usage from "../usage.js";
 import type * as usageBootstrap from "../usageBootstrap.js";
 import type * as usageBootstrapRunner from "../usageBootstrapRunner.js";
@@ -45,6 +47,8 @@ declare const fullApi: ApiFromModules<{
   platformViewers: typeof platformViewers;
   rounds: typeof rounds;
   state: typeof state;
+  telegram: typeof telegram;
+  telegramActions: typeof telegramActions;
   usage: typeof usage;
   usageBootstrap: typeof usageBootstrap;
   usageBootstrapRunner: typeof usageBootstrapRunner;

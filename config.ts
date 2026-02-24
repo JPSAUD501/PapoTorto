@@ -67,6 +67,8 @@ export const TWITCH_API_BATCH_SIZE = 100;
 export const YOUTUBE_API_BATCH_SIZE = 50;
 // Timeout da validacao HTTP do Fossabot.
 export const FOSSABOT_VALIDATE_TIMEOUT_MS = 5_000;
+// Intervalo de polling de updates do Telegram Bot API.
+export const TELEGRAM_UPDATES_POLL_INTERVAL_MS = 5_000;
 
 // Janela de suavizacao para sincronizar estimativa local com atualizacoes remotas de reasoning.
 export const REASONING_ESTIMATOR_SYNC_BLEND_MS = 260;

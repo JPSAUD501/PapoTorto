@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
-import { PLATFORM_VIEWER_POLL_INTERVAL_MS, RUNNER_LEASE_MS } from "./constants";
+import { RUNNER_LEASE_MS } from "./constants";
 import { toClientRound } from "./rounds";
 import {
   getEngineState,
@@ -15,12 +15,6 @@ import {
   listModelCatalog,
 } from "./models";
 import { readTotalViewerCount } from "./viewerCount";
-
-function getPollIntervalMs(): number {
-  const raw = Number.parseInt(process.env.PLATFORM_VIEWER_POLL_INTERVAL_MS ?? "", 10);
-  if (!Number.isFinite(raw) || raw <= 0) return PLATFORM_VIEWER_POLL_INTERVAL_MS;
-  return raw;
-}
 
 export const getState = query({
   args: {},
@@ -180,15 +174,8 @@ async function ensureStartedImpl(ctx: any) {
     await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
   }
 
-  const latestState = await getOrCreateEngineState(ctx as any);
-  if (!latestState.platformPollScheduledAt || latestState.platformPollScheduledAt <= now) {
-    const interval = getPollIntervalMs();
-    await ctx.scheduler.runAfter(0, convexInternal.platformViewers.pollTargets, {});
-    await ctx.db.patch(latestState._id, {
-      platformPollScheduledAt: now + interval,
-      updatedAt: now,
-    });
-  }
+  await ctx.scheduler.runAfter(0, convexInternal.platformViewers.ensurePollingStarted, {});
+
 }
 
 export const ensureStarted = mutation({

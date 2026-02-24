@@ -3,7 +3,6 @@ import { internalMutation, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 const convexInternal = internal as any;
 import {
-  RUNNER_LEASE_MS,
   VIEWER_PRESENCE_REAPER_MAX_LIMIT,
   VIEWER_REAPER_BATCH,
   VIEWER_REAPER_INTERVAL_MS,
@@ -11,8 +10,24 @@ import {
   VIEWER_SHARD_COUNT,
   hashToShard,
 } from "./constants";
-import { getOrCreateEngineState, resolveRuntimeRoundTiming } from "./state";
-import { readTotalViewerCount } from "./viewerCount";
+import { getEngineState } from "./state";
+
+async function getViewerReaperState(ctx: any) {
+  return await ctx.db
+    .query("viewerReaperState")
+    .withIndex("by_key", (q: any) => q.eq("key", "main"))
+    .first();
+}
+
+async function getOrCreateViewerReaperState(ctx: any) {
+  const existing = await getViewerReaperState(ctx);
+  if (existing) return existing;
+  const id = await ctx.db.insert("viewerReaperState", {
+    key: "main",
+    updatedAt: Date.now(),
+  });
+  return await ctx.db.get(id);
+}
 
 async function adjustCountShard(ctx: any, shard: number, delta: number) {
   const row = await ctx.db
@@ -85,8 +100,6 @@ export const heartbeat = mutation({
 
     const now = Date.now();
     const shard = hashToShard(args.viewerId, VIEWER_SHARD_COUNT);
-    let increasedCount = false;
-
     const existing = await ctx.db
       .query("viewerPresence")
       .withIndex("by_viewerId", (q: any) => q.eq("viewerId", args.viewerId))
@@ -104,7 +117,6 @@ export const heartbeat = mutation({
         updatedAt: now,
       });
       await adjustCountShard(ctx, shard, 1);
-      increasedCount = true;
     } else {
       const wasExpired = existing.expiresAt <= now;
       await ctx.db.patch(existing._id, {
@@ -115,53 +127,18 @@ export const heartbeat = mutation({
       });
       if (wasExpired) {
         await adjustCountShard(ctx, existing.countShard, 1);
-        increasedCount = true;
       }
     }
 
-    const engine = await getOrCreateEngineState(ctx as any);
-    const hasValidLease = Boolean(
-      engine.runnerLeaseId &&
-      engine.runnerLeaseUntil &&
-      engine.runnerLeaseUntil > now,
-    );
-    if (!hasValidLease) {
-      const leaseId = crypto.randomUUID();
-      await ctx.db.patch(engine._id, {
-        runnerLeaseId: leaseId,
-        runnerLeaseUntil: now + RUNNER_LEASE_MS,
-        updatedAt: now,
-      });
-      await ctx.scheduler.runAfter(0, convexInternal.engineRunner.runLoop, { leaseId });
-    }
-
-    if (!engine.reaperScheduledAt || engine.reaperScheduledAt <= now) {
+    const reaperState = await getOrCreateViewerReaperState(ctx as any);
+    if (reaperState && (!reaperState.scheduledAt || reaperState.scheduledAt <= now)) {
       await ctx.scheduler.runAfter(0, convexInternal.viewers.reapExpired, {
         limit: VIEWER_REAPER_BATCH,
       });
-      await ctx.db.patch(engine._id, {
-        reaperScheduledAt: now + VIEWER_REAPER_INTERVAL_MS,
+      await ctx.db.patch(reaperState._id, {
+        scheduledAt: now + VIEWER_REAPER_INTERVAL_MS,
+        updatedAt: now,
       });
-    }
-
-    if (increasedCount && engine.activeRoundId) {
-      const activeRound = await ctx.db.get(engine.activeRoundId);
-      if (activeRound && activeRound.phase === "voting" && activeRound.viewerVotingEndsAt) {
-        const timing = resolveRuntimeRoundTiming(engine);
-        const shortenNow = Date.now();
-        const remaining = activeRound.viewerVotingEndsAt - shortenNow;
-        if (remaining > timing.viewerVoteWindowActiveMs) {
-          const totalViewerCount = await readTotalViewerCount(ctx as any);
-          if (totalViewerCount > 0) {
-            await ctx.db.patch(activeRound._id, {
-              viewerVotingEndsAt: shortenNow + timing.viewerVoteWindowActiveMs,
-              viewerVotingWindowMs: timing.viewerVoteWindowActiveMs,
-              viewerVotingMode: "active",
-              updatedAt: shortenNow,
-            });
-          }
-        }
-      }
     }
 
     return null;
@@ -212,8 +189,8 @@ async function castVoteImpl(
   votedFor: "A" | "B" | null;
   status: "accepted" | "updated" | "unchanged" | "inactive";
 }> {
-  const engine = await getOrCreateEngineState(ctx as any);
-  if (!engine.activeRoundId) {
+  const engine = await getEngineState(ctx as any);
+  if (!engine?.activeRoundId) {
     return { ok: false, votedFor: null, status: "inactive" };
   }
 
@@ -284,13 +261,15 @@ export const reapExpired = internalMutation({
       processed += 1;
     }
 
-    const engine = await getOrCreateEngineState(ctx as any);
+    const reaperState = await getOrCreateViewerReaperState(ctx as any);
     const delayMs = expired.length === limit ? 0 : VIEWER_REAPER_INTERVAL_MS;
     await ctx.scheduler.runAfter(delayMs, convexInternal.viewers.reapExpired, { limit });
-    await ctx.db.patch(engine._id, {
-      reaperScheduledAt: now + delayMs,
-      updatedAt: now,
-    });
+    if (reaperState) {
+      await ctx.db.patch(reaperState._id, {
+        scheduledAt: now + delayMs,
+        updatedAt: now,
+      });
+    }
 
     return { processed };
   },
