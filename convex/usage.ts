@@ -185,7 +185,13 @@ function usageSummary(events: any[], denominator: number) {
   };
 }
 
-function pushDenominator(denominators: Record<string, Record<string, number>>, modelId: string, type: string) {
+type ActionDenominator = { prompt: number; answer: number; vote: number };
+
+function pushDenominator(
+  denominators: Partial<Record<string, ActionDenominator>>,
+  modelId: string,
+  type: keyof ActionDenominator,
+) {
   if (!denominators[modelId]) {
     denominators[modelId] = { prompt: 0, answer: 0, vote: 0 };
   }
@@ -394,7 +400,7 @@ export const getAdminModelUsageAverages = internalQuery({
       modelEpochById.set(model.modelId, safeEpoch(model.metricsEpoch));
     }
 
-    const denominators: Record<string, Record<string, number>> = {};
+    const denominators: Partial<Record<string, ActionDenominator>> = {};
     const denominatorRounds = await ctx.db
       .query("rounds")
       .withIndex("by_generation_and_num", (q: any) => q.eq("generation", generation))
@@ -439,8 +445,10 @@ export const getAdminModelUsageAverages = internalQuery({
 
     const usageByModel: Record<string, any> = {};
     const usageHourlyByModel: Record<string, any> = {};
+    const missingSamplesByModelAction: Record<string, { prompt: number; answer: number; vote: number }> = {};
     const activeModels = models.filter((model) => model.enabled && !model.archivedAt);
     const activeModelIdSet = new Set(activeModels.map((model) => model.modelId));
+    const sampleWindowSize = Math.max(windowSize, PROJECTION_BOOTSTRAP_TARGET_SAMPLES);
     for (const model of models) {
       const modelId = model.modelId;
       const modelEpoch = safeEpoch(model.metricsEpoch);
@@ -449,7 +457,7 @@ export const getAdminModelUsageAverages = internalQuery({
       const answerDenominator = modelDenominator.answer ?? 0;
       const voteDenominator = modelDenominator.vote ?? 0;
 
-      const [promptEvents, answerEvents, voteEvents] = await Promise.all([
+      const [promptEventsRaw, answerEventsRaw, voteEventsRaw] = await Promise.all([
         ctx.db
           .query("llmUsageEvents")
           .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
@@ -460,7 +468,7 @@ export const getAdminModelUsageAverages = internalQuery({
               .eq("requestType", "prompt"),
           )
           .order("desc")
-          .take(windowSize),
+          .take(sampleWindowSize),
         ctx.db
           .query("llmUsageEvents")
           .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
@@ -471,7 +479,7 @@ export const getAdminModelUsageAverages = internalQuery({
               .eq("requestType", "answer"),
           )
           .order("desc")
-          .take(windowSize),
+          .take(sampleWindowSize),
         ctx.db
           .query("llmUsageEvents")
           .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
@@ -482,9 +490,12 @@ export const getAdminModelUsageAverages = internalQuery({
               .eq("requestType", "vote"),
           )
           .order("desc")
-          .take(windowSize),
+          .take(sampleWindowSize),
       ]);
 
+      const promptEvents = promptEventsRaw.slice(0, windowSize);
+      const answerEvents = answerEventsRaw.slice(0, windowSize);
+      const voteEvents = voteEventsRaw.slice(0, windowSize);
       const allEvents = [...promptEvents, ...answerEvents, ...voteEvents];
 
       usageByModel[modelId] = {
@@ -493,6 +504,20 @@ export const getAdminModelUsageAverages = internalQuery({
         vote: usageSummary(voteEvents, voteDenominator),
       };
       usageHourlyByModel[modelId] = buildHourlyCostSummary(allEvents);
+
+      if (activeModelIdSet.has(modelId)) {
+        const promptMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - promptEventsRaw.length);
+        const answerMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - answerEventsRaw.length);
+        const voteMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - voteEventsRaw.length);
+        if (promptMissing <= 0 && answerMissing <= 0 && voteMissing <= 0) {
+          continue;
+        }
+        missingSamplesByModelAction[modelId] = {
+          prompt: promptMissing,
+          answer: answerMissing,
+          vote: voteMissing,
+        };
+      }
     }
 
     const activeModelIds = activeModels.map((model) => model.modelId);
@@ -504,58 +529,6 @@ export const getAdminModelUsageAverages = internalQuery({
       const modelHourly = safeNumber(usageHourlyByModel[modelId]?.avgCostPerHourUsd);
       activeModelsHourlyShareByModel[modelId] =
         activeModelsAvgCostPerHourUsd > 0 ? (modelHourly / activeModelsAvgCostPerHourUsd) * 100 : 0;
-    }
-
-    const missingSamplesByModelAction: Record<string, { prompt: number; answer: number; vote: number }> = {};
-    for (const activeModel of activeModels) {
-      const modelId = activeModel.modelId;
-      const modelEpoch = safeEpoch(activeModel.metricsEpoch);
-      const [promptSampleEvents, answerSampleEvents, voteSampleEvents] = await Promise.all([
-        ctx.db
-          .query("llmUsageEvents")
-          .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
-            q
-              .eq("generation", generation)
-              .eq("modelId", modelId)
-              .eq("modelMetricsEpoch", modelEpoch)
-              .eq("requestType", "prompt"),
-          )
-          .order("desc")
-          .take(PROJECTION_BOOTSTRAP_TARGET_SAMPLES),
-        ctx.db
-          .query("llmUsageEvents")
-          .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
-            q
-              .eq("generation", generation)
-              .eq("modelId", modelId)
-              .eq("modelMetricsEpoch", modelEpoch)
-              .eq("requestType", "answer"),
-          )
-          .order("desc")
-          .take(PROJECTION_BOOTSTRAP_TARGET_SAMPLES),
-        ctx.db
-          .query("llmUsageEvents")
-          .withIndex("by_generation_model_epoch_type_finishedAt", (q: any) =>
-            q
-              .eq("generation", generation)
-              .eq("modelId", modelId)
-              .eq("modelMetricsEpoch", modelEpoch)
-              .eq("requestType", "vote"),
-          )
-          .order("desc")
-          .take(PROJECTION_BOOTSTRAP_TARGET_SAMPLES),
-      ]);
-
-      const promptMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - promptSampleEvents.length);
-      const answerMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - answerSampleEvents.length);
-      const voteMissing = Math.max(0, PROJECTION_BOOTSTRAP_TARGET_SAMPLES - voteSampleEvents.length);
-      if (promptMissing > 0 || answerMissing > 0 || voteMissing > 0) {
-        missingSamplesByModelAction[modelId] = {
-          prompt: promptMissing,
-          answer: answerMissing,
-          vote: voteMissing,
-        };
-      }
     }
 
     const bootstrapRunning = state.projectionBootstrapRunning === true;
@@ -692,9 +665,8 @@ export const getAdminModelUsageAverages = internalQuery({
     const interRoundGapSamplesMs: number[] = [];
     const extraInterRoundSamplesMs: number[] = [];
     for (let i = 0; i < recentDoneRoundsAsc.length - 1; i += 1) {
-      const currentRound = recentDoneRoundsAsc[i];
-      const nextRound = recentDoneRoundsAsc[i + 1];
-      if (!currentRound || !nextRound) continue;
+      const currentRound = recentDoneRoundsAsc[i]!;
+      const nextRound = recentDoneRoundsAsc[i + 1]!;
 
       const completedAt = safeNumber(currentRound.completedAt) || safeNumber(currentRound.updatedAt);
       const nextCreatedAt = safeNumber(nextRound.createdAt);

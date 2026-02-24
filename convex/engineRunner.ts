@@ -117,9 +117,19 @@ async function safeRenewLease(
   }
 }
 
-async function withLeaseHeartbeat<T>(ctx: any, leaseId: string, fn: () => Promise<T>): Promise<T> {
+async function withLeaseHeartbeat<T>(
+  ctx: any,
+  leaseId: string,
+  generation: number,
+  fn: () => Promise<T>,
+): Promise<T> {
   const timer = setInterval(() => {
-    void ctx.runMutation(convexInternal.engine.renewLease, { leaseId }).catch(() => {});
+    void safeRenewLease(ctx, leaseId, generation).catch((error) => {
+      console.warn(
+        "[engineRunner] lease heartbeat renew failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
   }, RUNNER_LEASE_HEARTBEAT_MS);
   try {
     return await fn();
@@ -272,7 +282,7 @@ export const runLoop = internalAction({
         estimatedReasoningTokens: 0,
       });
 
-      const promptResult = await withLeaseHeartbeat(ctx, args.leaseId, async () => {
+      const promptResult = await withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
         return await callGeneratePrompt(prompter, async (estimatedReasoningTokens, finalized) => {
           promptReasoningEstimate = estimatedReasoningTokens;
           if (!(await leaseStillValid(ctx, args.leaseId, expectedGeneration))) return;
@@ -352,7 +362,7 @@ export const runLoop = internalAction({
       }),
     );
 
-    await withLeaseHeartbeat(ctx, args.leaseId, async () => {
+    await withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
       await Promise.all(
         contestants.map(async (contestant, answerIndex) => {
           try {
@@ -455,8 +465,8 @@ export const runLoop = internalAction({
     const answerA = roundForVotes.answerTasks[0]?.result ?? "[no answer]";
     const answerB = roundForVotes.answerTasks[1]?.result ?? "[no answer]";
 
-    let modelVotesDone = false;
-    const modelVotesPromise = withLeaseHeartbeat(ctx, args.leaseId, async () => {
+    const modelVotesState = { done: false };
+    const modelVotesPromise = withLeaseHeartbeat(ctx, args.leaseId, expectedGeneration, async () => {
       await Promise.all(
         voters.map(async (voter, voteIndex) => {
           try {
@@ -501,7 +511,7 @@ export const runLoop = internalAction({
         }),
       );
     }).finally(() => {
-      modelVotesDone = true;
+      modelVotesState.done = true;
     });
 
     let windowClosed = false;
@@ -512,7 +522,7 @@ export const runLoop = internalAction({
       const latestRound = await ctx.runQuery(convexInternal.engine.getRoundForRunner, { roundId });
       if (!latestRound || latestRound.phase !== "voting" || !latestRound.viewerVotingEndsAt) {
         windowClosed = true;
-        if (!modelVotesDone) {
+        if (!modelVotesState.done) {
           await sleep(ENGINE_RUNNER_VOTE_MODEL_WAIT_MS);
         }
       } else {
@@ -525,7 +535,7 @@ export const runLoop = internalAction({
               Math.min(ENGINE_RUNNER_VOTE_WINDOW_POLL_MAX_MS, remaining),
             ),
           );
-        } else if (!modelVotesDone) {
+        } else if (!modelVotesState.done) {
           await sleep(ENGINE_RUNNER_VOTE_MODEL_WAIT_MS);
         }
       }
@@ -538,7 +548,7 @@ export const runLoop = internalAction({
     }
 
     let modelVotesFailed = false;
-    if (modelVotesDone) {
+    if (modelVotesState.done) {
       try {
         await modelVotesPromise;
       } catch {

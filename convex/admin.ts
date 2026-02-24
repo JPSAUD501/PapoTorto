@@ -98,19 +98,12 @@ export const getSnapshot = internalMutation({
       };
     }
 
-    const doneRounds = await ctx.db
-      .query("rounds")
-      .withIndex("by_generation_and_phase", (q: any) =>
-        q.eq("generation", state.generation).eq("phase", "done"),
-      )
-      .collect();
-
     return {
       isPaused: state.isPaused,
       isRunningRound: Boolean(state.activeRoundId),
       done: state.done,
       completedInMemory: state.completedRounds,
-      persistedRounds: doneRounds.length,
+      persistedRounds: state.completedRounds,
       viewerCount: await readTotalViewerCount(ctx),
       activeModelCount: status.activeModelCount,
       canRunRounds: status.canRunRounds,

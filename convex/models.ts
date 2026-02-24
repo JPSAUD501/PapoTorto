@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import {
   AVAILABLE_MODEL_LOGO_IDS,
   DEFAULT_MODEL_REASONING_EFFORT,
@@ -12,6 +13,8 @@ import {
   type ModelCatalogEntry,
 } from "../shared/models";
 import { getOrCreateEngineState } from "./state";
+
+const convexInternal = internal as any;
 
 export const MIN_ACTIVE_MODELS = 3;
 
@@ -255,6 +258,10 @@ async function syncEngineEnabledModelIds(ctx: { db: any }, models: ModelCatalogE
   });
 }
 
+async function scheduleProjectionBootstrapEnsure(ctx: { scheduler: any }) {
+  await ctx.scheduler.runAfter(0, convexInternal.usageBootstrap.ensureProjectionBootstrap, {});
+}
+
 export async function ensureModelCatalogSeededImpl(ctx: { db: any }): Promise<ModelCatalogEntry[]> {
   const existing = await ctx.db.query("models").collect();
   if (existing.length > 0) {
@@ -454,6 +461,7 @@ export const createModel = internalMutation({
 
     const models = await listModelCatalog(ctx as any);
     await syncEngineEnabledModelIds(ctx as any, models);
+    await scheduleProjectionBootstrapEnsure(ctx as any);
     return buildModelMutationResponse(models);
   },
 });
@@ -481,6 +489,7 @@ export const setModelEnabled = internalMutation({
 
     const models = await listModelCatalog(ctx as any);
     await syncEngineEnabledModelIds(ctx as any, models);
+    await scheduleProjectionBootstrapEnsure(ctx as any);
     return buildModelMutationResponse(models);
   },
 });
@@ -510,6 +519,7 @@ export const archiveModel = internalMutation({
 
     const models = await listModelCatalog(ctx as any);
     await syncEngineEnabledModelIds(ctx as any, models);
+    await scheduleProjectionBootstrapEnsure(ctx as any);
     return buildModelMutationResponse(models);
   },
 });
@@ -541,6 +551,7 @@ export const restoreModel = internalMutation({
 
     const models = await listModelCatalog(ctx as any);
     await syncEngineEnabledModelIds(ctx as any, models);
+    await scheduleProjectionBootstrapEnsure(ctx as any);
     return buildModelMutationResponse(models);
   },
 });
@@ -636,6 +647,7 @@ export const updateModel = internalMutation({
 
     const models = await listModelCatalog(ctx as any);
     await syncEngineEnabledModelIds(ctx as any, models);
+    await scheduleProjectionBootstrapEnsure(ctx as any);
     return buildModelMutationResponse(models);
   },
 });
