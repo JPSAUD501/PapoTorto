@@ -62,11 +62,11 @@ bun run dev
 | `OPENROUTER_API_KEY` | Sim | API key para gerar respostas IA |
 | `ADMIN_PASSCODE` | Sim | Senha para acessar `/admin` |
 | `STREAM_RTMP_TARGET` | Stream | URL RTMP (ex: `rtmp://a.rtmp.youtube.com/live2/...`) |
-| `STREAM_VIDEO_BITRATE_KBPS` | Não | Bitrate de vídeo (default `6800`) |
-| `STREAM_AUDIO_BITRATE_KBPS` | Não | Bitrate de áudio em kbps (default `160`) |
-| `STREAM_CAPTURE_BITRATE_BPS` | Não | Bitrate de captura no navegador (default `12000000`) |
 
 Veja os arquivos `.env.*.example` para a lista completa.
+
+Perfil de stream padrão já configurado no código (sem env extra):
+`1280x720`, `30fps`, `3500 kbps` vídeo CBR, `128 kbps` áudio e keyframe a cada `2s`.
 
 ## Votação do público
 

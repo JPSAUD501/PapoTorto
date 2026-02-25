@@ -95,7 +95,7 @@ export const BROADCAST_CAPTURE_DEFAULT_BITRATE = 12_000_000;
 // Intervalo em ms para o MediaRecorder emitir chunks.
 export const BROADCAST_CAPTURE_TIMESLICE_MS = 250;
 // Buffer maximo de bytes enfileirados para envio de chunks no broadcast.
-export const BROADCAST_CAPTURE_MAX_QUEUED_BYTES = 16_000_000;
+export const BROADCAST_CAPTURE_MAX_QUEUED_BYTES = 64_000_000;
 
 // URL base da API OpenRouter para consultas de metrica de geracao.
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
