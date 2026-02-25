@@ -11,14 +11,18 @@ type SinkWriter = {
 };
 
 const STREAM_FPS = 30;
-const CAPTURE_BITRATE = 12_000_000;
+const CAPTURE_BITRATE = resolvePositiveIntEnv("STREAM_CAPTURE_BITRATE_BPS", 12_000_000);
 const TARGET_WIDTH = "1920";
 const TARGET_HEIGHT = "1080";
-const VIDEO_BITRATE = "6000k";
-const MAXRATE = "6000k";
-const BUFSIZE = "12000k";
-const GOP = "60";
-const AUDIO_BITRATE = "160k";
+const VIDEO_BITRATE_KBPS = resolvePositiveIntEnv("STREAM_VIDEO_BITRATE_KBPS", 6800);
+const VIDEO_BITRATE = `${VIDEO_BITRATE_KBPS}k`;
+const MAXRATE = VIDEO_BITRATE;
+const MINRATE = VIDEO_BITRATE;
+const BUFSIZE = `${VIDEO_BITRATE_KBPS * 2}k`;
+const KEYFRAME_INTERVAL_SECONDS = 2;
+const GOP = String(STREAM_FPS * 2);
+const AUDIO_BITRATE_KBPS = resolvePositiveIntEnv("STREAM_AUDIO_BITRATE_KBPS", 160);
+const AUDIO_BITRATE = `${AUDIO_BITRATE_KBPS}k`;
 const PLAYLIST_TRACKS = 20_000;
 const BROADCAST_WAIT_TIMEOUT_MS = 30_000;
 const BROADCAST_WAIT_RETRY_MS = 1_000;
@@ -34,10 +38,19 @@ function shouldDisableChromiumSandbox(): boolean {
   return false;
 }
 
+function resolvePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
 function usage(): never {
   console.error("Usage: bun scripts/stream-browser.ts <live|dryrun>");
   console.error("Required for live mode: STREAM_RTMP_TARGET");
   console.error("Required for audio: music/bg_1.mp3, music/bg_2.mp3, ...");
+  console.error("Optional: STREAM_VIDEO_BITRATE_KBPS, STREAM_AUDIO_BITRATE_KBPS");
   process.exit(1);
 }
 
@@ -185,7 +198,9 @@ function buildFfmpegArgs(currentMode: Mode, playlistPath: string): string[] {
     "-map",
     "1:a:0",
     "-vf",
-    `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
+    `fps=${STREAM_FPS},scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
+    "-fps_mode",
+    "cfr",
     "-c:v",
     "libx264",
     "-preset",
@@ -196,14 +211,20 @@ function buildFfmpegArgs(currentMode: Mode, playlistPath: string): string[] {
     "yuv420p",
     "-b:v",
     VIDEO_BITRATE,
+    "-minrate",
+    MINRATE,
     "-maxrate",
     MAXRATE,
     "-bufsize",
     BUFSIZE,
+    "-x264-params",
+    "nal-hrd=cbr:force-cfr=1",
     "-g",
     GOP,
     "-keyint_min",
     GOP,
+    "-force_key_frames",
+    `expr:gte(t,n_forced*${KEYFRAME_INTERVAL_SECONDS})`,
     "-sc_threshold",
     "0",
     "-c:a",
